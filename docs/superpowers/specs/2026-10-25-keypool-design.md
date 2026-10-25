@@ -1,7 +1,7 @@
 # KeyPool hosted API gateway design
 
 Date: 2026-10-25
-Status: Approved by the user; implemented and undergoing production verification.
+Status: Approved, implemented and deployed; production verification passed.
 
 ## Intent and authorized destination
 
@@ -127,6 +127,6 @@ Logical records: owner, sessions, credentials, quota_groups, models, aliases, al
 - Renew certificates through the server's existing certificate tooling after inspecting its setup.
 - Document deployment, restart, backup, restore, key rotation and rollback in the repository.
 
-## Remaining approval
+## Delivery status
 
-User has specified hosting, domain and repository. This document records proposed product and implementation defaults for approval before product code is built. No further access details are currently needed. Live provider verification requires credentials added privately to the completed dashboard, never committed or requested in public chat.
+The user approved this design and authorized continuous implementation and deployment. The app is live and its production checks passed; see docs/VERIFICATION.md. Live provider verification requires credentials added privately to the completed dashboard, never committed or requested in public chat.
