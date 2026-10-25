@@ -27,24 +27,38 @@ await page.getByLabel("Email address").fill("super-qa@example.com");
 await page.getByLabel(/^Password/).fill("super-browser-password-123");
 await page.getByRole("button", { name: "Create workspace" }).click();
 await page.getByRole("heading", { name: "One key. Every provider." }).waitFor();
+const ownerSession = await page.request
+  .get("http://localhost:4000/api/session")
+  .then((r) => r.json());
 for (const [name, group, key, allowance] of [
   ["Platform A", "project-a", "fixture-key-a", 10000000],
   ["Platform B", "project-b", "fixture-key-b", 3000000],
   ["Platform C", "project-c", "fixture-key-c", 3000000000],
   ["Platform A second key", "project-a", "fixture-key-a2", 10000000],
 ]) {
-  await page.getByRole("button", { name: "Add provider", exact: true }).click();
-  await page.getByLabel("Provider name").fill(name);
-  await page
-    .getByLabel("Base URL", { exact: false })
-    .fill("https://example.com/v1");
-  await page.getByLabel("Provider API key").fill(key);
-  await page.getByLabel("Quota group / project ID").fill(group);
-  await page.getByLabel("New pool token allowance").fill(String(allowance));
-  await page.getByLabel("Exact model IDs").fill("fixture-model");
-  await page.getByLabel("Billing policy").selectOption("free");
-  await page.getByRole("button", { name: "Save provider" }).click();
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  // Seed independently specified fixture budgets via the legacy management API;
+  // onboarding itself is covered by the two-field browser acceptance.
+  const seeded = await page.request.post(
+    "http://localhost:4000/api/admin/providers",
+    {
+      headers: {
+        Origin: "http://localhost:4000",
+        "X-CSRF-Token": ownerSession.csrf,
+      },
+      data: {
+        name,
+        adapter: "openai",
+        baseUrl: "https://example.com/v1",
+        apiKey: key,
+        quotaGroup: group,
+        models: ["fixture-model"],
+        paid: false,
+        initialAllowance: allowance,
+        initialPeriod: "lifetime",
+      },
+    },
+  );
+  assert.equal(seeded.status(), 201);
 }
 const quota = page.getByRole("region", { name: "Super key quota" });
 await quota.getByText("3.013B", { exact: true }).first().waitFor();

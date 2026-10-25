@@ -534,3 +534,19 @@ test("recognized quota HTTP403 does not permanently disable a valid provider cre
   assert.notEqual(store.provider("p")!.status, "credentials_rejected");
   store.close();
 });
+
+test("a stale custom alias cannot route a model removed by free-only discovery", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () => {
+    calls++;
+    return good();
+  });
+  store.saveProvider({ ...p, models: ["different-free-model"] });
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send(body);
+  assert.equal(r.status, 503);
+  assert.equal(calls, 0);
+  store.close();
+});

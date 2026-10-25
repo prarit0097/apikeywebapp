@@ -19,6 +19,7 @@ import {
 } from "./security.js";
 import type { Provider, Alias } from "./store.js";
 import { availableAliases, poolSummary } from "./pool.js";
+import { discoverProvider, DiscoveryError } from "./discovery.js";
 
 export class HttpError extends Error {
   constructor(
@@ -225,6 +226,110 @@ export function createApp(config: AppConfig) {
   app.get("/api/admin/providers", (_req, res) =>
     res.json(store.providers().map(cleanProvider)),
   );
+  const connectSchema = z
+    .object({
+      baseUrl: z.string().url().max(500),
+      apiKey: z.string().trim().min(8).max(4096).optional(),
+    })
+    .strict();
+  async function connectProvider(req: Request, res: Response) {
+    if (!store.rateLimit(`discovery:${req.ip}`, 10, 60000))
+      throw new HttpError(429, "Please wait before detecting another provider");
+    const id = typeof req.params.id === "string" ? req.params.id : undefined;
+    const previous = id ? store.provider(id) : undefined;
+    if (id && !previous) throw new HttpError(404, "Provider not found");
+    const input = connectSchema.parse(req.body);
+    let result;
+    try {
+      result = await discoverProvider(config, input, previous);
+    } catch (e) {
+      if (e instanceof DiscoveryError) throw new HttpError(e.status, e.message);
+      throw new HttpError(
+        400,
+        "Provider detection failed. Check the base URL and API key.",
+      );
+    }
+    if (previous) {
+      const current = store.provider(previous.id);
+      if (!current || JSON.stringify(current) !== JSON.stringify(previous))
+        throw new HttpError(
+          409,
+          "Provider changed during detection. Refresh and retry.",
+        );
+    }
+    const { provider, tokenQuota } = result;
+    let imported = false;
+    store.transaction(() => {
+      let group = store.groups().find((g) => g.id === provider.quotaGroup);
+      if (!group) {
+        store.saveGroup({
+          id: provider.quotaGroup,
+          allowance: tokenQuota?.total ?? null,
+          period: tokenQuota?.period || "daily",
+          timezone: tokenQuota?.timezone || "UTC",
+          verified: !!tokenQuota,
+        });
+        group = store.groups().find((g) => g.id === provider.quotaGroup);
+        if (!tokenQuota)
+          store.run(
+            "UPDATE quota_groups SET quota_source='auto' WHERE id=?",
+            provider.quotaGroup,
+          );
+        if (tokenQuota) {
+          store.run(
+            "UPDATE quota_groups SET external_used=?,quota_source='provider',observed_at=? WHERE id=?",
+            tokenQuota.total - tokenQuota.remaining,
+            Date.now(),
+            provider.quotaGroup,
+          );
+          imported = true;
+        }
+      } else if (
+        tokenQuota &&
+        group.allowance === null &&
+        group.source === "auto" &&
+        ((group.period === tokenQuota.period &&
+          group.timezone === tokenQuota.timezone) ||
+          (!group.consumed && !group.reserved && !group.externalUsed))
+      ) {
+        store.saveGroup({
+          id: group.id,
+          allowance: tokenQuota.total,
+          period: tokenQuota.period,
+          timezone: tokenQuota.timezone,
+          verified: true,
+          rpm: group.rpm,
+          tpm: group.tpm,
+        });
+        store.run(
+          "UPDATE quota_groups SET external_used=?,quota_source='provider',observed_at=? WHERE id=?",
+          Math.max(0, tokenQuota.total - tokenQuota.remaining - group.consumed),
+          Date.now(),
+          group.id,
+        );
+        imported = true;
+      }
+      store.saveProvider(provider);
+    });
+    res.status(previous ? 200 : 201).json({
+      provider: cleanProvider(provider),
+      message:
+        result.message +
+        (tokenQuota
+          ? imported
+            ? " Allowance imported."
+            : " Existing pool budget retained."
+          : ""),
+    });
+  }
+  app.post("/api/admin/providers/connect", connectProvider);
+  app.put("/api/admin/providers/:id/connect", connectProvider);
+  app.post("/api/admin/providers/:id/rediscover", (req, res, next) => {
+    const p = store.provider(String(req.params.id));
+    if (!p) return next(new HttpError(404, "Provider not found"));
+    req.body = { baseUrl: p.baseUrl };
+    return connectProvider(req, res);
+  });
   async function saveProvider(req: Request, res: Response) {
     const id = String(req.params.id || randomUUID()),
       previous = req.params.id ? store.provider(id) : undefined;

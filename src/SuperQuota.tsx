@@ -125,9 +125,11 @@ export default function SuperQuota({
         </span>
       </div>
       <p className="super-quota-note">
-        Total allowances are owner-entered. Balance subtracts recorded usage and
-        reservations. Direct provider usage is not tracked. Multiple super keys
-        share this pool; their allowances do not multiply.
+        Allowances come from provider data or optional owner estimates. Balance
+        subtracts gateway usage, reservations and imported prior provider usage
+        ({compact(q.externalUsedQuota)} tokens). Provider usage may change
+        between detections. Multiple super keys share this pool; their
+        allowances do not multiply.
       </p>
     </section>
   );

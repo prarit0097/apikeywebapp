@@ -59,11 +59,18 @@ export function poolSummary(store: Store, keyId?: string) {
       balanceQuota: unknownPools
         ? null
         : known.reduce(
-            (n, g) => n + Math.max(0, g.allowance! - g.consumed - g.reserved),
+            (n, g) =>
+              n +
+              Math.max(
+                0,
+                g.allowance! - g.consumed - g.reserved - g.externalUsed,
+              ),
             0,
           ),
       knownBalance: known.reduce(
-        (n, g) => n + Math.max(0, g.allowance! - g.consumed - g.reserved),
+        (n, g) =>
+          n +
+          Math.max(0, g.allowance! - g.consumed - g.reserved - g.externalUsed),
         0,
       ),
       nextResetAt: items[0].resetAt,
@@ -81,7 +88,9 @@ export function poolSummary(store: Store, keyId?: string) {
   return {
     model: "super",
     estimated: true,
-    source: "owner-entered allowances; gateway-reported usage",
+    source:
+      "configured or provider-imported allowances; gateway-reported usage",
+    externalUsedQuota: groups.reduce((n, g) => n + g.externalUsed, 0),
     usageScope:
       "all clients using this gateway; direct provider usage is not tracked",
     sharedPool: true,

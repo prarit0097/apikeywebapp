@@ -19,6 +19,15 @@ export type Provider = {
   contextLimit: number | null;
   status: string;
   testedAt: number | null;
+  discovery?: {
+    checkedAt: number;
+    modelsFound: number;
+    freeModelsFound: number;
+    groupVerified: boolean;
+    toolSupport: string;
+    quotaSource: string | null;
+    notes: string[];
+  };
 };
 export type Alias = {
   id: string;
@@ -38,6 +47,9 @@ export type QuotaGroup = {
   timezone: string;
   rpm: number | null;
   tpm: number | null;
+  externalUsed: number;
+  source: string;
+  observedAt: number | null;
 };
 function nextReset(period: string, timezone = "UTC") {
   const d = DateTime.now().setZone(timezone);
@@ -74,6 +86,13 @@ export class Store {
       ["timezone", "TEXT NOT NULL DEFAULT 'UTC'"],
       ["rpm", "INTEGER"],
       ["tpm", "INTEGER"],
+    ])
+      if (!columns.includes(name))
+        this.db.exec(`ALTER TABLE quota_groups ADD COLUMN ${name} ${def}`);
+    for (const [name, def] of [
+      ["external_used", "INTEGER NOT NULL DEFAULT 0"],
+      ["quota_source", "TEXT NOT NULL DEFAULT 'manual'"],
+      ["observed_at", "INTEGER"],
     ])
       if (!columns.includes(name))
         this.db.exec(`ALTER TABLE quota_groups ADD COLUMN ${name} ${def}`);
@@ -175,7 +194,10 @@ export class Store {
     if (existing) {
       const changed =
         existing.period !== g.period || existing.timezone !== timezone;
-      if (changed && (existing.consumed || existing.reserved))
+      if (
+        changed &&
+        (existing.consumed || existing.reserved || existing.external_used)
+      )
         throw new Error(
           "Reset schedule cannot change after usage or reservations; create a new quota group",
         );
@@ -211,7 +233,7 @@ export class Store {
     for (const g of expired) {
       this.run("DELETE FROM reservations WHERE group_id=?", g.id);
       this.run(
-        "UPDATE quota_groups SET consumed=0,reserved=0,reset_at=? WHERE id=?",
+        "UPDATE quota_groups SET consumed=0,reserved=0,external_used=0,reset_at=? WHERE id=?",
         nextReset(g.period, g.timezone),
         g.id,
       );
@@ -231,6 +253,9 @@ export class Store {
       timezone: g.timezone,
       rpm: g.rpm,
       tpm: g.tpm,
+      externalUsed: g.external_used,
+      source: g.quota_source,
+      observedAt: g.observed_at,
     }));
   }
   reserve(group: string, amount: number): string | null {
@@ -241,7 +266,8 @@ export class Store {
       if (
         !g ||
         g.cooldown > now ||
-        (g.allowance !== null && g.consumed + g.reserved + amount > g.allowance)
+        (g.allowance !== null &&
+          g.consumed + g.reserved + g.external_used + amount > g.allowance)
       )
         return null;
       this.run("DELETE FROM group_rates WHERE expires<=?", now);

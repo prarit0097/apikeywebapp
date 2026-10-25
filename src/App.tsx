@@ -66,12 +66,24 @@ type Provider = {
   keySuffix: string;
   status: string;
   testedAt: number | null;
+  discovery?: {
+    checkedAt: number;
+    modelsFound: number;
+    freeModelsFound: number;
+    groupVerified: boolean;
+    toolSupport: string;
+    quotaSource: string | null;
+    notes: string[];
+  };
 };
 type Group = {
   id: string;
   allowance: number | null;
   period: string;
   consumed: number;
+  externalUsed: number;
+  source: "manual" | "provider";
+  observedAt: number | null;
   reserved: number;
   resetAt: number | null;
   cooldownUntil: number;
@@ -157,42 +169,6 @@ const date = (n: number | null) =>
         minute: "2-digit",
       })
     : "Never";
-const presets: Record<
-  string,
-  { adapter: string; baseUrl: string; models: string; group: string }
-> = {
-  custom: { adapter: "openai", baseUrl: "", models: "", group: "" },
-  gemini: {
-    adapter: "gemini",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    models: "",
-    group: "",
-  },
-  groq: {
-    adapter: "openai",
-    baseUrl: "https://api.groq.com/openai/v1",
-    models: "",
-    group: "",
-  },
-  openrouter: {
-    adapter: "openai",
-    baseUrl: "https://openrouter.ai/api/v1",
-    models: "",
-    group: "",
-  },
-  anthropic: {
-    adapter: "anthropic",
-    baseUrl: "https://api.anthropic.com/v1",
-    models: "",
-    group: "",
-  },
-  openai: {
-    adapter: "openai",
-    baseUrl: "https://api.openai.com/v1",
-    models: "",
-    group: "",
-  },
-};
 function Brand() {
   return (
     <div className="brand">
@@ -472,12 +448,12 @@ export default function App() {
     window.addEventListener("hashchange", change);
     return () => window.removeEventListener("hashchange", change);
   }, []);
-  const mutate = async (fn: () => Promise<any>, message: string) => {
+  const mutate = async (fn: () => Promise<any>, message?: string) => {
     setBusy(true);
     setError("");
     try {
-      await fn();
-      notify(message);
+      const result = await fn();
+      notify(message ?? result?.message ?? "Changes saved");
       await refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -1005,13 +981,12 @@ export default function App() {
                           ).catch(() => {})
                         }
                         onTest={(p) =>
-                          mutate(async () => {
-                            const r = await api(
-                              `/api/admin/providers/${p.id}/test`,
-                              { method: "POST", body: "{}" },
-                            );
-                            notify(r.message);
-                          }, "Provider check completed").catch(() => {})
+                          mutate(() =>
+                            api(`/api/admin/providers/${p.id}/rediscover`, {
+                              method: "POST",
+                              body: "{}",
+                            }),
+                          ).catch(() => {})
                         }
                         onDelete={(p) =>
                           setConfirm({
@@ -1055,8 +1030,8 @@ export default function App() {
                   <div className="section-title">
                     <h2>Quota pools</h2>
                     <span className="muted small">
-                      Reset schedules follow each pool timezone · allowances are
-                      manual estimates
+                      Reset schedules follow each pool timezone · provider data
+                      or optional manual estimates
                     </span>
                   </div>
                   <div className="quota-grid">
@@ -1077,7 +1052,10 @@ export default function App() {
                             : number(
                                 Math.max(
                                   0,
-                                  g.allowance - g.consumed - g.reserved,
+                                  g.allowance -
+                                    g.consumed -
+                                    g.reserved -
+                                    (g.externalUsed ?? 0),
                                 ),
                               )}
                           <small>
@@ -1089,13 +1067,16 @@ export default function App() {
                         <div className="quota-bar">
                           <span
                             style={{
-                              width: `${g.allowance ? Math.min(100, ((g.consumed + g.reserved) / g.allowance) * 100) : 0}%`,
+                              width: `${g.allowance ? Math.min(100, ((g.consumed + g.reserved + (g.externalUsed ?? 0)) / g.allowance) * 100) : 0}%`,
                             }}
                           />
                         </div>
                         <p>
                           {number(g.consumed)} recorded · {number(g.reserved)}{" "}
                           reserved
+                          {g.externalUsed > 0
+                            ? ` · ${number(g.externalUsed)} prior usage`
+                            : ""}
                         </p>
                         <Badge
                           tone={
@@ -1407,16 +1388,14 @@ export default function App() {
           provider={providerModal === "new" ? undefined : providerModal}
           onClose={() => setProviderModal(null)}
           onSave={async (body) => {
-            await mutate(
-              () =>
-                api(
-                  `/api/admin/providers${providerModal === "new" ? "" : `/${providerModal.id}`}`,
-                  {
-                    method: providerModal === "new" ? "POST" : "PUT",
-                    body: JSON.stringify(body),
-                  },
-                ),
-              "Provider saved",
+            await mutate(() =>
+              api(
+                `/api/admin/providers${providerModal === "new" ? "" : `/${providerModal.id}`}/connect`,
+                {
+                  method: providerModal === "new" ? "POST" : "PUT",
+                  body: JSON.stringify(body),
+                },
+              ),
             );
             setProviderModal(null);
           }}
@@ -1589,24 +1568,31 @@ function ProviderTable({
                 <td>
                   <Badge
                     tone={
-                      !p.enabled
-                        ? "neutral"
-                        : p.status === "connected"
-                          ? "green"
-                          : p.status.includes("failed") ||
-                              p.status.includes("rejected")
-                            ? "red"
-                            : "amber"
+                      p.status === "billing_unverified" ||
+                      p.status === "discovery_pending"
+                        ? "amber"
+                        : !p.enabled
+                          ? "neutral"
+                          : p.status === "connected"
+                            ? "green"
+                            : p.status.includes("failed") ||
+                                p.status.includes("rejected")
+                              ? "red"
+                              : "amber"
                     }
                   >
                     <span className="status-dot" />
-                    {!p.enabled
-                      ? "Paused"
-                      : p.status === "connected"
-                        ? "Connected"
-                        : p.status === "untested"
-                          ? "Untested"
-                          : "Check required"}
+                    {p.status === "billing_unverified"
+                      ? "Billing unverified · paused"
+                      : p.status === "discovery_pending"
+                        ? "Detection pending · paused"
+                        : !p.enabled
+                          ? "Paused"
+                          : p.status === "connected"
+                            ? "Connected"
+                            : p.status === "untested"
+                              ? "Untested"
+                              : "Check required"}
                   </Badge>
                   {p.paid && (
                     <div className="small muted">
@@ -1628,12 +1614,20 @@ function ProviderTable({
                     {g?.allowance === null || !g
                       ? "Unknown"
                       : number(
-                          Math.max(0, g.allowance - g.consumed - g.reserved),
+                          Math.max(
+                            0,
+                            g.allowance -
+                              g.consumed -
+                              g.reserved -
+                              (g.externalUsed ?? 0),
+                          ),
                         )}
                   </strong>
                   <small className="cell-sub">
                     {g?.allowance !== null && g
-                      ? "manual estimate"
+                      ? g.source === "provider"
+                        ? "Provider reported"
+                        : "Manual estimate"
                       : "Not reported"}
                   </small>
                 </td>
@@ -1647,8 +1641,8 @@ function ProviderTable({
                     {onTest && (
                       <button
                         className="icon-button"
-                        title="Test credentials via model list"
-                        aria-label={`Test ${p.name}`}
+                        title="Detect provider details again"
+                        aria-label={`Rediscover ${p.name}`}
                         disabled={testing === p.id}
                         onClick={async () => {
                           setTesting(p.id);
@@ -1935,47 +1929,32 @@ function ProviderForm({
   onClose,
 }: {
   provider?: Provider;
-  onSave: (body: any) => Promise<void>;
+  onSave: (body: { baseUrl: string; apiKey?: string }) => Promise<void>;
   onClose: () => void;
 }) {
-  const [preset, setPreset] = useState("custom"),
-    [adapter, setAdapter] = useState(provider?.adapter || "openai"),
-    [url, setUrl] = useState(provider?.baseUrl || ""),
+  const [url, setUrl] = useState(provider?.baseUrl || ""),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [paid, setPaid] = useState(provider?.paid ?? true);
+    [error, setError] = useState("");
+  let originChanged = false;
+  if (provider) {
+    try {
+      originChanged = new URL(url).origin !== new URL(provider.baseUrl).origin;
+    } catch {
+      /* Native URL validation handles incomplete values. */
+    }
+  }
+  const needsKey = !provider || originChanged;
+  const discovery = provider?.discovery;
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError("");
-    const f = new FormData(e.currentTarget);
-    const body = {
-      name: String(f.get("name")),
-      adapter,
-      baseUrl: url,
-      quotaGroup: String(f.get("group")),
-      models: String(f.get("models"))
-        .split(/[\n,]+/)
-        .map((s) => s.trim())
-        .filter(Boolean),
-      priority: Number(f.get("priority")),
-      enabled: provider?.enabled ?? true,
-      paid,
-      allowPaid: f.get("allowPaid") === "on",
-      tools: f.get("tools") === "on",
-      contextLimit: f.get("context") ? Number(f.get("context")) : null,
-      ...(!provider
-        ? {
-            initialPeriod: String(f.get("period")),
-            ...(f.get("allowance") !== ""
-              ? { initialAllowance: Number(f.get("allowance")) }
-              : {}),
-          }
-        : {}),
-      ...(f.get("apiKey") ? { apiKey: String(f.get("apiKey")) } : {}),
-    };
+    const key = String(
+      new FormData(e.currentTarget).get("apiKey") || "",
+    ).trim();
     try {
-      await onSave(body);
+      await onSave({ baseUrl: url.trim(), ...(key ? { apiKey: key } : {}) });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1988,187 +1967,98 @@ function ProviderForm({
       description="Your credential is encrypted and stays on your server."
       onClose={onClose}
     >
-      <form onSubmit={submit}>
-        <FormError error={error} />
-        {!provider && (
-          <Field label="Quick setup">
-            <select
-              value={preset}
-              onChange={(e) => {
-                setPreset(e.target.value);
-                setAdapter(presets[e.target.value].adapter);
-                setUrl(presets[e.target.value].baseUrl);
-              }}
-            >
-              <option value="custom">Custom OpenAI-compatible API</option>
-              <option value="gemini">Google Gemini</option>
-              <option value="groq">Groq</option>
-              <option value="openrouter">OpenRouter</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-            </select>
-          </Field>
-        )}
-        <div className="form-grid">
-          <Field label="Provider name">
-            <input
-              name="name"
-              defaultValue={provider?.name}
-              placeholder="e.g. My Gemini project"
-              maxLength={80}
-              required
-            />
-          </Field>
-          <Field label="API format">
-            <select
-              value={adapter}
-              onChange={(e) => setAdapter(e.target.value)}
-            >
-              <option value="openai">OpenAI compatible</option>
-              <option value="anthropic">Anthropic Messages</option>
-              <option value="gemini">Gemini (OpenAI surface)</option>
-            </select>
-          </Field>
-        </div>
-        <Field
-          label="Base URL"
-          hint="Public HTTPS endpoint including its API version path. No /chat/completions or /messages suffix."
-        >
+      <form onSubmit={submit} aria-busy={busy}>
+        <Field label={needsKey ? "API key" : "API key (optional replacement)"}>
           <input
+            name="apiKey"
+            type="password"
+            autoComplete="off"
+            required={needsKey}
+            disabled={busy}
+            aria-describedby="provider-key-help"
+            placeholder={
+              needsKey
+                ? "Paste your provider API key"
+                : "Leave blank to keep saved key"
+            }
+          />
+          <small id="provider-key-help">
+            {originChanged
+              ? "This URL has a different origin. Re-enter the API key to connect it."
+              : provider
+                ? "Leave blank to keep the saved key on this origin."
+                : "Use the key from your provider account."}
+          </small>
+        </Field>
+        <Field label="Base URL">
+          <input
+            name="baseUrl"
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="https://provider.example/v1"
             required
+            disabled={busy}
+            aria-describedby="provider-url-help"
           />
+          <small id="provider-url-help">
+            Public HTTPS API endpoint, including its version path.
+          </small>
         </Field>
-        <Field
-          label={provider ? "Replace API key (optional)" : "Provider API key"}
-        >
-          <input
-            name="apiKey"
-            type="password"
-            autoComplete="off"
-            required={!provider}
-            placeholder={
-              provider
-                ? "Leave blank to keep saved key"
-                : "Paste your provider API key"
-            }
-          />
-        </Field>
-        <Field
-          label="Quota group / project ID"
-          hint="Keys sharing an account or project must use the same group. Different keys do not necessarily mean extra capacity."
-        >
-          <input
-            name="group"
-            defaultValue={provider?.quotaGroup}
-            placeholder="e.g. google-project-123"
-            required
-            maxLength={100}
-          />
-        </Field>
-        {!provider && (
-          <div className="form-grid">
-            <Field
-              label="New pool token allowance"
-              hint="Optional. Shared groups keep their existing allowance; entering a second key never adds the same quota twice."
-            >
-              <input
-                name="allowance"
-                type="number"
-                min={0}
-                max={1000000000000}
-                placeholder="e.g. 10000000"
-              />
-            </Field>
-            <Field label="Allowance period">
-              <select name="period" defaultValue="lifetime">
-                <option value="lifetime">Fixed / lifetime budget</option>
-                <option value="daily">Daily (UTC reset)</option>
-                <option value="monthly">Monthly (UTC reset)</option>
-              </select>
-            </Field>
-          </div>
-        )}
-        <Field
-          label="Exact model IDs"
-          hint="Use IDs from your provider's console. Separate with commas or new lines."
-        >
-          <textarea
-            name="models"
-            defaultValue={provider?.models.join("\n")}
-            placeholder="Enter model IDs supported by this key"
-            required
-            rows={2}
-          />
-        </Field>
-        <Field
-          label="Billing policy"
-          hint="Free capacity is determined by your provider account and selected model, not by KeyPool."
-        >
-          <select
-            value={paid ? "paid" : "free"}
-            onChange={(e) => setPaid(e.target.value === "paid")}
+        <p className="provider-connect-help">
+          Name, models and API format are detected automatically. Quota may
+          remain Unknown. If free usage cannot be verified, the credential is
+          saved paused.
+        </p>
+        {discovery && (
+          <section
+            className="provider-discovery"
+            aria-label="Last detected provider details"
           >
-            <option value="paid">
-              May incur charges — budget and opt-in required
-            </option>
-            <option value="free">
-              Free only — I verified no billing for this key/model
-            </option>
-          </select>
-        </Field>
-        <details className="advanced">
-          <summary>
-            Capabilities & routing options <ChevronDown size={15} />
-          </summary>
-          <div className="form-grid">
-            <Field label="Priority (lower goes first)">
-              <input
-                type="number"
-                name="priority"
-                min={0}
-                max={1000}
-                defaultValue={provider?.priority ?? 10}
-              />
-            </Field>
-            <Field label="Context limit (optional)">
-              <input
-                type="number"
-                name="context"
-                min={1024}
-                defaultValue={provider?.contextLimit || ""}
-                placeholder="Provider context tokens"
-              />
-            </Field>
-          </div>
-          <label className="check-field">
-            <input
-              type="checkbox"
-              name="tools"
-              defaultChecked={provider?.tools ?? true}
-            />
-            <span>Model supports function / tool calling</span>
-          </label>
-          {paid && (
-            <label className="check-field warning-check">
-              <input
-                type="checkbox"
-                name="allowPaid"
-                defaultChecked={provider?.allowPaid || false}
-              />
-              <span>
-                I allow paid requests through this credential. Set a finite
-                quota-pool allowance before use. Local token allowances are
-                estimates, not a provider billing cap.
-              </span>
-            </label>
-          )}
-        </details>
+            <h3>Last detection</h3>
+            <dl>
+              <div>
+                <dt>Checked</dt>
+                <dd>{date(discovery.checkedAt)}</dd>
+              </div>
+              <div>
+                <dt>Models found</dt>
+                <dd>{number(discovery.modelsFound)}</dd>
+              </div>
+              <div>
+                <dt>Free models reported</dt>
+                <dd>{number(discovery.freeModelsFound)}</dd>
+              </div>
+              <div>
+                <dt>Shared group</dt>
+                <dd>{discovery.groupVerified ? "Verified" : "Unverified"}</dd>
+              </div>
+              <div>
+                <dt>Tool support</dt>
+                <dd>{discovery.toolSupport}</dd>
+              </div>
+              <div>
+                <dt>Quota source</dt>
+                <dd>{discovery.quotaSource || "Not reported"}</dd>
+              </div>
+            </dl>
+            {discovery.notes.length > 0 && (
+              <ul>
+                {discovery.notes.map((note, index) => (
+                  <li key={index}>{note}</li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+        <FormError error={error} />
         <div className="form-actions">
-          <button type="button" className="button secondary" onClick={onClose}>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={onClose}
+            disabled={busy}
+          >
             Cancel
           </button>
           <button className="button primary" disabled={busy}>
@@ -2177,7 +2067,7 @@ function ProviderForm({
             ) : (
               <ShieldCheck size={16} />
             )}
-            Save provider
+            {provider ? "Detect & save" : "Detect & connect"}
           </button>
         </div>
       </form>

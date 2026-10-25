@@ -4,9 +4,17 @@ A private, self-hosted API gateway and dashboard. Connect your own LLM provider 
 
 Production: **https://api.praritsidana.com**
 
+## Connect with two fields
+
+The provider form asks for **API key** and **Base URL** only. KeyPool detects the platform name, API format, chat models, reported tool/context capabilities and exposed quota metadata through bounded read-only API requests. No generation is run during detection. For example, NaraRouter uses `https://router.bynara.id/v1` and authenticated model discovery.
+
+If token-denominated quota metadata is available it can initialize an unknown automatic pool, preserving gateway usage and accounting for already-used provider tokens. Currency balances, context windows, RPM limits and public subscription descriptions are never converted into fabricated token balances. Existing configured budgets remain intact. Automatic setup conservatively shares one upstream-origin pool even if account identifiers appear inconsistently; this can undercount genuinely independent accounts but prevents duplicate capacity.
+
+Only provider-declared free models are enabled automatically. Explicit positive prices override free flags; missing or null prices do not mean zero cost. If free usage or model discovery cannot be established, the credential is saved paused with detection notes. It is not silently charged or given an invented model name. Use Refresh detection to retry metadata checks. Editing asks for the same two fields; a blank key retains the encrypted same-origin credential, while changing origins requires re-entry.
+
 ## Super key workflow
 
-Every gateway credential is a **super key** over the shared eligible provider pool. Add each provider credential with its exact model IDs and actual account/project quota group. You can enter a new pool's token allowance and reset period during onboarding. A second key in the same group does not add the allowance again.
+Every gateway credential is a **super key** over the shared eligible provider pool. Add each provider credential with just its API key and base URL; metadata and a conservative shared group are detected automatically. A second key in the same group does not add the allowance again. Separate legacy/advanced configurations can still define verified independent pools when needed.
 
 Use **`model: "super"`** to route automatically across eligible providers, starting with the first configured model per provider and respecting priority. A local allowance that cannot cover the request is skipped. An explicit upstream rate-limit, quota or recognized credit-exhaustion rejection tries the next independent pool. Candidates are tried once within the request deadline, including a fourth provider after three exhausted ones. Partial output and ambiguous dispatch are never replayed; no gateway can guarantee continuity when every compatible provider is unavailable. Cross-model output and capabilities may differ.
 
@@ -38,8 +46,8 @@ An allowance entered in the dashboard is a **manual estimate**, not a verified p
 ## First use
 
 1. Open the production website. Use the bootstrap token from your private deployment access file to create the owner account. This closes setup permanently after the first owner.
-2. Add a provider. Enter the **exact model IDs** from that provider. Choose the real account/project quota group, not a separate group for every key. Select **Free only** only after verifying the account/model cannot bill; unclassified credentials default to potentially paid and require a finite pool allowance plus explicit opt-in.
-3. Optionally configure the group's allowance, timezone and RPM/TPM. Leave unknown limits blank. If you enter a remaining budget for a partly used account, account for usage already recorded by this gateway when choosing its total allowance.
+2. Add a provider using just its API key and base URL, then select Detect & connect. Read the detected status; no model IDs or project fields are required.
+3. Provider-exposed token allowances are imported when safe; unavailable values stay Unknown. Existing optional quota overrides and legacy management APIs remain available for advanced existing configurations, separate from the two-field connection flow.
 4. Use the automatic `super` route, or optionally create a scoped alias such as `coding`. Provider priority influences scheduling. Custom aliases with different-model fallback require explicit opt-in.
 5. Generate a gateway key and save it immediately. It cannot be recovered later; revoke and create a replacement if lost.
 6. Open **Connect Claude Code**, select your alias, and copy the configuration. The connection check only lists gateway models and does not generate tokens.

@@ -108,8 +108,9 @@ export function mountGateway(app: Express) {
       const candidates = alias.targets
         .map((t) => ({ target: t, provider: store.provider(t.providerId) }))
         .filter(
-          ({ provider: p }) =>
+          ({ provider: p, target }) =>
             p?.enabled &&
+            p.models.includes(target.model) &&
             (!p.paid || p.allowPaid) &&
             (!message.tools?.length || p.tools),
         );

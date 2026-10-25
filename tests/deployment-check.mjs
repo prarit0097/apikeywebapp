@@ -43,7 +43,7 @@ for (const spoof of ["8.8.8.8", "1.1.1.1"]) {
       password: "not-a-real-password-123",
     }),
   });
-  assert.equal(r.status, 403);
+  assert.ok([403, 409].includes(r.status));
 }
 const secretPath = await fetch(origin + "/.env");
 assert.ok(!(await secretPath.text()).includes("ENCRYPTION_KEY="));
@@ -55,7 +55,12 @@ page.on("console", (m) => {
   if (m.type() === "error") errors.push(m.text());
 });
 await page.goto(origin);
-await page.getByRole("heading", { name: "Make it yours." }).waitFor();
+const accountState = await fetch(origin + "/api/session").then((r) => r.json());
+await page
+  .getByRole("heading", {
+    name: accountState.setupRequired ? "Make it yours." : "Welcome back.",
+  })
+  .waitFor();
 await page.screenshot({
   path: ".private/production-setup.png",
   fullPage: true,
