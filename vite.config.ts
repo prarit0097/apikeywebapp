@@ -2,7 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
-  build: { outDir: "dist/client" },
+  // Serve even small fonts as same-origin files, matching the strict CSP.
+  build: { outDir: "dist/client", assetsInlineLimit: 0 },
   server: {
     port: 5173,
     proxy: {
