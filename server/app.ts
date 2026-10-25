@@ -71,7 +71,9 @@ export function createApp(config: AppConfig) {
   const { store, origin, production } = config;
   const app = express();
   app.disable("x-powered-by");
-  app.set("trust proxy", "loopback");
+  // Production has exactly one trusted, loopback-published Docker/Nginx proxy hop.
+  // Nginx overwrites X-Forwarded-For rather than appending user input.
+  app.set("trust proxy", production ? 1 : "loopback");
   app.use((req, res, next) => {
     res.set({
       "X-Content-Type-Options": "nosniff",
@@ -417,14 +419,12 @@ export function createApp(config: AppConfig) {
   app.get("/v1/models", (_req, res) =>
     res.json({
       object: "list",
-      data: store
-        .aliases()
-        .map((a) => ({
-          id: a.name,
-          object: "model",
-          created: 0,
-          owned_by: "keypool",
-        })),
+      data: store.aliases().map((a) => ({
+        id: a.name,
+        object: "model",
+        created: 0,
+        owned_by: "keypool",
+      })),
     }),
   );
   // Gateway and provider tests are registered through this hook before final middleware.
@@ -473,20 +473,18 @@ export function finishApp(app: express.Express) {
             : status === 413
               ? "Request is too large"
               : "An internal error occurred";
-    res
-      .status(status)
-      .json({
-        type: "error",
-        error: {
-          type:
-            error instanceof HttpError
-              ? error.code
-              : status === 400
-                ? "invalid_request_error"
-                : "api_error",
-          message,
-        },
-      });
+    res.status(status).json({
+      type: "error",
+      error: {
+        type:
+          error instanceof HttpError
+            ? error.code
+            : status === 400
+              ? "invalid_request_error"
+              : "api_error",
+        message,
+      },
+    });
   });
   return app;
 }

@@ -34,10 +34,10 @@ Provider credential tests use the provider's model-list endpoint. A provider can
 
 ## Client endpoints
 
-| Client | Base URL | Endpoints |
-|---|---|---|
-| Anthropic / Claude Code | `https://api.praritsidana.com` | `POST /v1/messages` |
-| OpenAI SDK | `https://api.praritsidana.com/v1` | `POST /chat/completions`, `GET /models` |
+| Client                  | Base URL                          | Endpoints                               |
+| ----------------------- | --------------------------------- | --------------------------------------- |
+| Anthropic / Claude Code | `https://api.praritsidana.com`    | `POST /v1/messages`                     |
+| OpenAI SDK              | `https://api.praritsidana.com/v1` | `POST /chat/completions`, `GET /models` |
 
 Authenticate with `Authorization: Bearer <gateway-key>` or `x-api-key: <gateway-key>`. Use a configured alias for `model`. Unknown aliases return an error instead of silently selecting a different model. `/v1/messages/count_tokens` is intentionally omitted; supported clients can estimate locally.
 
@@ -59,7 +59,7 @@ $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = "1"
 claude
 ```
 
-Non-Claude models in Claude Code are **experimental** and not officially supported by Anthropic. Model behavior and future client releases can differ. This adapter supports ordinary text and function tool calls. Unsupported reasoning, image, prompt caching and advanced request fields produce explicit errors rather than silently dropping their semantics. Native Anthropic requests forward their supported fields. Test your selected model on a disposable project before depending on a full coding workflow.
+Non-Claude models in Claude Code are **experimental** and not officially supported by Anthropic. Model behavior and future client releases can differ. This adapter supports ordinary text and function tool calls. Claude Code's `output_config.effort` maps explicitly to OpenAI `reasoning_effort` (none/minimal/low/medium/high/xhigh); the upstream must support the supplied value. Reasoning content blocks, images, prompt caching and other unsupported advanced fields produce explicit errors rather than silently dropping their semantics. Native Anthropic requests forward their supported fields. Test your selected model on a disposable project before depending on a full coding workflow.
 
 ## Local development
 
@@ -87,7 +87,7 @@ See [operations](docs/OPERATIONS.md) for deployment, backup, recovery and rollba
 
 At most eight concurrent generations and three upstream attempts per incoming request. Retry/fallback is restricted to explicit credential rejection, rate-limit or service-unavailable responses before client output begins. Ambiguous connection failures and partial streams are never automatically replayed. Gateway credentials have a 120-request/minute guard; failed authentication and owner login are rate-limited.
 
-Requests reserve a conservative input byte estimate plus requested maximum output. Actual reported input/output usage reconciles the reservation. Interrupted or unreported usage retains the reservation until the pool resets, so an incomplete request can temporarily reduce estimated available capacity. Manual token budgets are not guaranteed billing caps. Paid credentials require explicit opt-in; configure provider-side billing limits as well.
+Requests reserve a conservative input byte estimate plus requested maximum output. Actual reported input/output usage reconciles the reservation. Interrupted or unreported usage retains the reservation until the pool resets, so an incomplete request can temporarily reduce estimated available capacity. Manual token budgets are not guaranteed billing caps. Paid credentials require explicit opt-in **and a finite token allowance on their quota pool**; unknown-budget paid routes never dispatch. Configure provider-side billing limits as well.
 
 Logs retain 90 days and prune when requests are recorded. Operations on a credential do not require exposing its saved key. Keep a secure backup of the encryption key: losing it makes encrypted provider credentials unrecoverable.
 

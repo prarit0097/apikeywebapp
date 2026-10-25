@@ -70,6 +70,8 @@ for (const name of [
 await page.setViewportSize({ width: 390, height: 844 });
 await page.getByRole("button", { name: "Open navigation" }).click();
 await page.getByRole("link", { name: "Overview", exact: true }).click();
+await page.locator(".sidebar.open").waitFor({ state: "hidden" });
+await page.getByRole("heading", { name: "One key. Every provider." }).waitFor();
 await page.screenshot({ path: ".private/overview-mobile.png", fullPage: true });
 if (await page.locator("body").evaluate((el) => el.scrollWidth > innerWidth))
   throw new Error("Mobile overview overflow");

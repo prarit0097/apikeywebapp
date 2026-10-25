@@ -78,6 +78,7 @@ export async function providerRequest(
   signal: AbortSignal,
   body?: any,
   beta?: string,
+  version?: string,
 ): Promise<UpstreamResponse> {
   const key = decryptSecret(p.encryptedKey, config.encryptionKey);
   const headers: Record<string, string> = {
@@ -86,7 +87,7 @@ export async function providerRequest(
   };
   if (p.adapter === "anthropic") {
     headers["x-api-key"] = key;
-    headers["anthropic-version"] = "2023-06-01";
+    headers["anthropic-version"] = version || "2023-06-01";
     if (beta) headers["anthropic-beta"] = beta;
   } else headers.Authorization = `Bearer ${key}`;
   return (config.providerFetch || safeRequest)(upstreamUrl(p, suffix), {
@@ -125,6 +126,7 @@ export async function* providerEvents(
   model: string,
   signal: AbortSignal,
   beta?: string,
+  version?: string,
 ): AsyncGenerator<Event> {
   const body =
     p.adapter === "anthropic"
@@ -138,6 +140,7 @@ export async function* providerEvents(
     signal,
     body,
     beta,
+    version,
   );
   if (r.statusCode < 200 || r.statusCode >= 300) {
     await discard(r);

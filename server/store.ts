@@ -115,6 +115,21 @@ export class Store {
       JSON.stringify(p),
     );
   }
+  patchProviderStatus(
+    snapshot: Provider,
+    patch: Partial<Pick<Provider, "status" | "testedAt" | "enabled">>,
+  ) {
+    const current = this.provider(snapshot.id);
+    if (
+      !current ||
+      current.encryptedKey !== snapshot.encryptedKey ||
+      current.baseUrl !== snapshot.baseUrl ||
+      current.adapter !== snapshot.adapter
+    )
+      return false;
+    this.saveProvider({ ...current, ...patch });
+    return true;
+  }
   aliases(): Alias[] {
     return this.all("SELECT json FROM aliases ORDER BY name").map((r) =>
       JSON.parse(r.json),

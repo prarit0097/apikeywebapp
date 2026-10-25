@@ -8,6 +8,54 @@ import {
   readSSE,
 } from "../server/protocol.js";
 
+test("mixed tool results precede the next user text in OpenAI request ordering", () => {
+  const out = toOpenAI(
+    {
+      max_tokens: 10,
+      messages: [
+        {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "call1", name: "Read", input: {} }],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "call1", content: "file data" },
+            { type: "text", text: "Now explain it" },
+          ],
+        },
+      ],
+    },
+    "model",
+  );
+  assert.deepEqual(
+    out.messages.map((m: any) => m.role),
+    ["assistant", "tool", "user"],
+  );
+});
+
+test("Claude Code effort configuration is explicitly mapped without discarding unknown output fields", () => {
+  const out = toOpenAI(
+    {
+      messages: [{ role: "user", content: "hi" }],
+      output_config: { effort: "medium" },
+    },
+    "model",
+  );
+  assert.equal(out.reasoning_effort, "medium");
+  assert.throws(
+    () =>
+      toOpenAI(
+        {
+          messages: [],
+          output_config: { effort: "medium", format: { type: "json_schema" } },
+        },
+        "model",
+      ),
+    /support/i,
+  );
+});
+
 test("tool calls and tool results preserve IDs and JSON across formats", () => {
   const message = {
     model: "coding",
@@ -145,6 +193,44 @@ test("truncated upstream stream is not presented as a completed answer", async (
     ),
     /incomplete|finish/i,
   );
+});
+
+test("native nonstream aggregation preserves thinking and signature deltas", async () => {
+  async function* events() {
+    yield {
+      type: "message_start",
+      message: {
+        id: "native",
+        content: [],
+        usage: { input_tokens: 10, output_tokens: 0 },
+      },
+    };
+    yield {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "thinking", thinking: "", signature: "" },
+    };
+    yield {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "thinking_delta", thinking: "reason" },
+    };
+    yield {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "signature_delta", signature: "sig" },
+    };
+    yield { type: "content_block_stop", index: 0 };
+    yield {
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: { output_tokens: 2 },
+    };
+    yield { type: "message_stop" };
+  }
+  const m = await collectMessage(events());
+  assert.equal(m.content[0].thinking, "reason");
+  assert.equal(m.content[0].signature, "sig");
 });
 
 test("SSE parser handles split UTF8, CRLF, comments and multiline data", async () => {

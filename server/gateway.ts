@@ -49,14 +49,27 @@ export function mountGateway(app: Express) {
       throw new HttpError(429, "Wait before testing this provider again");
     try {
       const result = await testProvider(config, p);
-      p.status = "connected";
-      p.testedAt = Date.now();
-      store.saveProvider(p);
-      res.json({ ...result, provider: cleanProvider(p) });
+      const applied = store.patchProviderStatus(p, {
+        status: "connected",
+        testedAt: Date.now(),
+      });
+      res.json({
+        ...result,
+        provider: store.provider(p.id)
+          ? cleanProvider(store.provider(p.id)!)
+          : null,
+        ...(!applied
+          ? {
+              message:
+                "Configuration changed during the test. Test the current credential again.",
+            }
+          : {}),
+      });
     } catch (e) {
-      p.status = "test_failed";
-      p.testedAt = Date.now();
-      store.saveProvider(p);
+      store.patchProviderStatus(p, {
+        status: "test_failed",
+        testedAt: Date.now(),
+      });
       throw new HttpError(
         502,
         e instanceof UpstreamError
@@ -124,6 +137,11 @@ export function mountGateway(app: Express) {
         for (const { provider: p, target } of candidates) {
           if (!p || ctl.signal.aborted || attempts >= 3) break;
           if (p.contextLimit && reservationSize > p.contextLimit) continue;
+          if (
+            p.paid &&
+            store.groups().find((g) => g.id === p.quotaGroup)?.allowance == null
+          )
+            continue;
           if (p.adapter !== "anthropic") {
             try {
               toOpenAI(message, target.model);
@@ -150,6 +168,7 @@ export function mountGateway(app: Express) {
               target.model,
               ctl.signal,
               String(req.headers["anthropic-beta"] || ""),
+              String(req.headers["anthropic-version"] || "2023-06-01"),
             );
             const first = await iterator.next();
             if (first.done) throw new ProtocolError("Empty upstream response");
@@ -186,14 +205,12 @@ export function mountGateway(app: Express) {
                 format === "anthropic" ? result : messageToOpenAI(result),
               );
             } else {
-              res
-                .status(200)
-                .set({
-                  "Content-Type": "text/event-stream; charset=utf-8",
-                  "Cache-Control": "no-cache, no-transform",
-                  Connection: "keep-alive",
-                  "X-Accel-Buffering": "no",
-                });
+              res.status(200).set({
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache, no-transform",
+                Connection: "keep-alive",
+                "X-Accel-Buffering": "no",
+              });
               res.flushHeaders();
               streamingStarted = true;
               async function write(value: string) {
@@ -340,9 +357,10 @@ export function mountGateway(app: Express) {
               error: reason,
             });
             if (rejected && (e.status === 401 || e.status === 403)) {
-              p.enabled = false;
-              p.status = "credentials_rejected";
-              store.saveProvider(p);
+              store.patchProviderStatus(p, {
+                enabled: false,
+                status: "credentials_rejected",
+              });
             }
             if (rejected && e.status === 429)
               store.cooldown(

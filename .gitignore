@@ -10,3 +10,4 @@ data/
 .private/
 playwright-report/
 test-results/
+.bootstrap-access.txt

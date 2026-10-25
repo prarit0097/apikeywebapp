@@ -30,11 +30,26 @@ export function toOpenAI(input: any, model: string): any {
     "tool_choice",
     "metadata",
     "thinking",
+    "output_config",
   ]);
   for (const k of Object.keys(input)) if (!supported.has(k)) unsupported(k);
   if (input.thinking && input.thinking.type !== "disabled")
     unsupported("thinking/reasoning");
   if (input.top_k !== undefined) unsupported("top_k");
+  if (input.output_config) {
+    if (
+      typeof input.output_config !== "object" ||
+      Object.keys(input.output_config).some((k) => k !== "effort")
+    )
+      unsupported("output_config");
+    if (
+      input.output_config.effort !== undefined &&
+      !["none", "minimal", "low", "medium", "high", "xhigh"].includes(
+        input.output_config.effort,
+      )
+    )
+      unsupported("output_config.effort");
+  }
   const messages: any[] = [];
   if (input.system)
     messages.push({ role: "system", content: text(input.system) });
@@ -52,6 +67,13 @@ export function toOpenAI(input: any, model: string): any {
         unsupported(b.type);
       if (b.cache_control) unsupported("prompt caching");
     }
+    // OpenAI requires tool results immediately after the assistant tool call.
+    for (const b of results)
+      messages.push({
+        role: "tool",
+        tool_call_id: b.tool_use_id,
+        content: text(b.content),
+      });
     if (tools.length || texts.length)
       messages.push({
         role: m.role,
@@ -66,12 +88,6 @@ export function toOpenAI(input: any, model: string): any {
             }
           : {}),
       });
-    for (const b of results)
-      messages.push({
-        role: "tool",
-        tool_call_id: b.tool_use_id,
-        content: text(b.content),
-      });
   }
   const out: any = {
     model,
@@ -80,6 +96,8 @@ export function toOpenAI(input: any, model: string): any {
     stream: true,
     stream_options: { include_usage: true },
   };
+  if (input.output_config?.effort !== undefined)
+    out.reasoning_effort = input.output_config.effort;
   for (const k of ["temperature", "top_p"])
     if (input[k] !== undefined) out[k] = input[k];
   if (input.stop_sequences) out.stop = input.stop_sequences;
@@ -372,6 +390,24 @@ export async function collectMessage(
       const b = result?.content[e.index];
       if (!b) throw new ProtocolError("Invalid content block sequence");
       if (e.delta.type === "text_delta") b.text += e.delta.text;
+      if (e.delta.type === "thinking_delta")
+        b.thinking = (b.thinking || "") + e.delta.thinking;
+      if (e.delta.type === "signature_delta")
+        b.signature = (b.signature || "") + e.delta.signature;
+      if (e.delta.type === "citations_delta")
+        b.citations = [...(b.citations || []), e.delta.citation];
+      if (
+        ![
+          "text_delta",
+          "thinking_delta",
+          "signature_delta",
+          "citations_delta",
+          "input_json_delta",
+        ].includes(e.delta.type)
+      )
+        throw new ProtocolError(
+          `Unsupported native content delta: ${e.delta.type}`,
+        );
       if (e.delta.type === "input_json_delta")
         args.set(e.index, (args.get(e.index) || "") + e.delta.partial_json);
     }

@@ -7,6 +7,45 @@ import { mountGateway } from "../server/gateway.js";
 import { Store, type Provider } from "../server/store.js";
 import { digest, encryptSecret } from "../server/security.js";
 
+test("native upstream receives client version and beta headers unchanged", async () => {
+  let headers: any;
+  const { app, store, p } = setup(async (_url: any, options: any) => {
+    headers = options.headers;
+    async function* native() {
+      for (const e of [
+        {
+          type: "message_start",
+          message: {
+            id: "native",
+            role: "assistant",
+            content: [],
+            usage: { input_tokens: 1, output_tokens: 0 },
+          },
+        },
+        {
+          type: "message_delta",
+          delta: { stop_reason: "end_turn" },
+          usage: { output_tokens: 0 },
+        },
+        { type: "message_stop" },
+      ])
+        yield Buffer.from(`data: ${JSON.stringify(e)}\n\n`);
+    }
+    return { statusCode: 200, headers: {}, body: native() };
+  });
+  store.saveProvider({ ...p, adapter: "anthropic" });
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .set("anthropic-version", "2023-06-02")
+    .set("anthropic-beta", "example-beta")
+    .send(body);
+  assert.equal(r.status, 200);
+  assert.equal(headers["anthropic-version"], "2023-06-02");
+  assert.equal(headers["anthropic-beta"], "example-beta");
+  store.close();
+});
+
 function setup(providerFetch: any) {
   const store = new Store(":memory:"),
     encryptionKey = randomBytes(32);
@@ -107,6 +146,85 @@ test("streaming sends ordered Anthropic events and the final stop", async () => 
   assert.equal(store.groups()[0].consumed, 15);
   store.close();
 });
+
+test("interrupted response emits a stream error without claiming completion or replaying", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () => {
+    calls++;
+    return response([{ choices: [{ delta: { content: "partial" } }] }]);
+  });
+  store.saveProvider({ ...p, id: "p2" });
+  store.saveAlias({
+    id: "a",
+    name: "coding",
+    targets: [
+      { providerId: "p", model: "model" },
+      { providerId: "p2", model: "model" },
+    ],
+    allowCrossModel: false,
+  });
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, stream: true });
+  assert.equal(r.status, 200);
+  assert.match(r.text, /event: error/);
+  assert.ok(!r.text.includes("event: message_stop"));
+  assert.equal(calls, 1);
+  assert.ok(store.groups()[0].reserved > 0);
+  store.close();
+});
+
+test("client cancellation aborts the upstream and retains its uncertain reservation", async () => {
+  let cancelled!: () => void;
+  const aborted = new Promise<void>((r) => (cancelled = r));
+  let calls = 0;
+  const { app, store } = setup(async (_url: any, options: any) => {
+    calls++;
+    async function* stream() {
+      yield Buffer.from(
+        'data: {"choices":[{"delta":{"content":"start"}}]}\n\n',
+      );
+      await new Promise((_resolve, reject) =>
+        options.signal.addEventListener(
+          "abort",
+          () => {
+            cancelled();
+            reject(new Error("aborted"));
+          },
+          { once: true },
+        ),
+      );
+    }
+    return { statusCode: 200, headers: {}, body: stream() };
+  });
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((r) => server.once("listening", r));
+  const port = (server.address() as any).port;
+  const ctl = new AbortController();
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Api-Key": "kp_test" },
+      body: JSON.stringify({ ...body, stream: true }),
+      signal: ctl.signal,
+    });
+    await r.body!.getReader().read();
+    ctl.abort();
+    await Promise.race([
+      aborted,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("upstream not cancelled")), 1500),
+      ),
+    ]);
+    assert.equal(calls, 1);
+    assert.ok(store.groups()[0].reserved > 0);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((r) => server.close(() => r()));
+    store.close();
+  }
+});
 test("rate limit cools down a shared group and falls back only to independent capacity", async () => {
   let calls = 0;
   const { app, store, p } = setup(async () =>
@@ -175,5 +293,92 @@ test("paid or tool-incompatible providers are not silently selected", async () =
     .send(body);
   assert.equal(r.status, 503);
   assert.equal(calls, 0);
+  store.close();
+});
+
+test("paid opt-in still requires a known local token budget before dispatch", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () => {
+    calls++;
+    return good();
+  });
+  store.saveGroup({ id: "group", allowance: null, period: "daily" });
+  store.saveProvider({ ...p, paid: true, allowPaid: true });
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send(body);
+  assert.equal(r.status, 503);
+  assert.equal(calls, 0);
+  store.close();
+});
+
+test("an in-flight credential rejection cannot disable a rotated replacement key", async () => {
+  let started!: () => void, release!: () => void;
+  const begun = new Promise<void>((r) => (started = r)),
+    waiting = new Promise<void>((r) => (release = r));
+  const { app, store, p } = setup(async () => {
+    started();
+    await waiting;
+    return response([], 401);
+  });
+  const pending = request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send(body)
+    .then((r) => r);
+  await begun;
+  store.saveProvider({
+    ...p,
+    encryptedKey: "rotated-encrypted-key",
+    enabled: true,
+  });
+  release();
+  await pending;
+  assert.equal(store.provider("p")!.encryptedKey, "rotated-encrypted-key");
+  assert.equal(store.provider("p")!.enabled, true);
+  store.close();
+});
+
+test("an in-flight provider test cannot restore an old key or overwrite current settings", async () => {
+  let started!: () => void, release!: () => void;
+  const begun = new Promise<void>((r) => (started = r)),
+    waiting = new Promise<void>((r) => (release = r));
+  const { app, store, p } = setup(async () => {
+    started();
+    await waiting;
+    async function* body() {
+      yield Buffer.from('{"data":[]}');
+    }
+    return { statusCode: 200, headers: {}, body: body() };
+  });
+  const agent = request.agent(app);
+  const setupResult = await agent
+    .post("/api/setup")
+    .set("Origin", "http://localhost:4000")
+    .send({
+      token: "long-test-bootstrap-token-123",
+      email: "test@example.com",
+      password: "long-password-123",
+    });
+  const pending = agent
+    .post("/api/admin/providers/p/test")
+    .set("Origin", "http://localhost:4000")
+    .set("X-CSRF-Token", setupResult.body.csrf)
+    .send({})
+    .then((r) => r);
+  await begun;
+  store.saveProvider({
+    ...p,
+    encryptedKey: "new-secret-ciphertext",
+    priority: 99,
+    enabled: false,
+  });
+  release();
+  const result = await pending;
+  assert.equal(result.status, 200);
+  assert.equal(store.provider("p")!.encryptedKey, "new-secret-ciphertext");
+  assert.equal(store.provider("p")!.priority, 99);
+  assert.equal(store.provider("p")!.enabled, false);
   store.close();
 });

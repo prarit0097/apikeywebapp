@@ -972,7 +972,7 @@ export default function App() {
                           ).catch(() => {})
                         }
                         onTest={(p) =>
-                          void mutate(async () => {
+                          mutate(async () => {
                             const r = await api(
                               `/api/admin/providers/${p.id}/test`,
                               { method: "POST", body: "{}" },
@@ -1491,7 +1491,7 @@ function ProviderTable({
   onEdit: (p: Provider) => void;
   onQuota: (g: Group) => void;
   onToggle?: (p: Provider) => void;
-  onTest?: (p: Provider) => void;
+  onTest?: (p: Provider) => Promise<void>;
   onDelete?: (p: Provider) => void;
 }) {
   const [testing, setTesting] = useState("");
@@ -2066,8 +2066,9 @@ function ProviderForm({
                 defaultChecked={provider?.allowPaid || false}
               />
               <span>
-                I allow paid requests through this credential. Local token
-                allowances are estimates, not a provider billing cap.
+                I allow paid requests through this credential. Set a finite
+                quota-pool allowance before use. Local token allowances are
+                estimates, not a provider billing cap.
               </span>
             </label>
           )}

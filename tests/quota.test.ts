@@ -2,6 +2,28 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Store } from "../server/store.js";
 import { DateTime } from "luxon";
+import { mkdtempSync, readdirSync, unlinkSync, rmdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+test("on-disk uncertain quota reservations survive a service restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "keypool-test-"));
+  const filename = join(dir, "quota.sqlite");
+  let s = new Store(filename);
+  try {
+    s.saveGroup({ id: "persistent", allowance: 100, period: "lifetime" });
+    const id = s.reserve("persistent", 80)!;
+    s.settle(id, null);
+    s.close();
+    s = new Store(filename);
+    assert.equal(s.groups()[0].reserved, 80);
+    assert.equal(s.reserve("persistent", 30), null);
+  } finally {
+    s.close();
+    for (const file of readdirSync(dir)) unlinkSync(join(dir, file));
+    rmdirSync(dir);
+  }
+});
 
 test("shared quota reservations prevent parallel overspend and survive reconciliation", () => {
   const s = new Store(":memory:");
