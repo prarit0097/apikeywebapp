@@ -15,9 +15,12 @@
     "start": "node dist/server/index.js"
   },
   "dependencies": {
+    "@fontsource-variable/ibm-plex-sans": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "express": "^5.3.0",
     "ipaddr.js": "^2.5.0",
     "lucide-react": "^1.61.0",
+    "luxon": "^3.7.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "undici": "^8.12.3",
@@ -26,11 +29,13 @@
   "devDependencies": {
     "@playwright/test": "^1.64.1",
     "@types/express": "^5.0.6",
+    "@types/luxon": "^3.7.6",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/supertest": "^7.2.1",
     "@vitejs/plugin-react": "^6.1.2",
+    "prettier": "^3.9.10",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
