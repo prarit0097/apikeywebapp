@@ -18,6 +18,7 @@ import {
   validatePublicUrl,
 } from "./security.js";
 import type { Provider, Alias } from "./store.js";
+import { availableAliases, poolSummary } from "./pool.js";
 
 export class HttpError extends Error {
   constructor(
@@ -38,6 +39,8 @@ const providerSchema = z
     adapter: z.enum(["anthropic", "openai", "gemini"]),
     baseUrl: z.string().url().max(500),
     apiKey: z.string().min(1).max(4096).optional(),
+    initialAllowance: z.number().int().min(0).max(1000000000000).optional(),
+    initialPeriod: z.enum(["daily", "monthly", "lifetime"]).optional(),
     quotaGroup: z.string().trim().min(1).max(100),
     models: z.array(z.string().trim().min(1).max(150)).min(1).max(100),
     priority: z.number().int().min(0).max(1000).default(10),
@@ -236,8 +239,12 @@ export function createApp(config: AppConfig) {
     }
     const existingGroup = store.groups().find((g) => g.id === b.quotaGroup);
     if (!existingGroup)
-      store.saveGroup({ id: b.quotaGroup, allowance: null, period: "daily" });
-    const { apiKey, ...fields } = b;
+      store.saveGroup({
+        id: b.quotaGroup,
+        allowance: b.initialAllowance ?? null,
+        period: b.initialPeriod || "daily",
+      });
+    const { apiKey, initialAllowance, initialPeriod, ...fields } = b;
     const p: Provider = {
       ...fields,
       id,
@@ -292,9 +299,24 @@ export function createApp(config: AppConfig) {
     }
     res.json(store.groups());
   });
-  app.get("/api/admin/aliases", (_req, res) => res.json(store.aliases()));
+  app.get("/api/admin/aliases", (_req, res) =>
+    res.json(availableAliases(store)),
+  );
   function saveAlias(req: Request, res: Response) {
+    if (req.params.id === "builtin-super")
+      throw new HttpError(
+        400,
+        "The automatic super route is managed through provider settings",
+      );
     const b = aliasSchema.parse(req.body);
+    if (
+      b.name === "super" &&
+      !store.aliases().some((a) => a.name === "super" && a.id === req.params.id)
+    )
+      throw new HttpError(
+        400,
+        "super is reserved for automatic pooling; choose a different alias",
+      );
     for (const target of b.targets) {
       const p = store.provider(target.providerId);
       if (!p || !p.models.includes(target.model))
@@ -319,14 +341,30 @@ export function createApp(config: AppConfig) {
   app.post("/api/admin/aliases", saveAlias);
   app.put("/api/admin/aliases/:id", saveAlias);
   app.delete("/api/admin/aliases/:id", (req, res) => {
+    if (req.params.id === "builtin-super")
+      throw new HttpError(
+        400,
+        "The automatic super route is managed through provider settings",
+      );
     store.run("DELETE FROM aliases WHERE id=?", String(req.params.id));
     res.json({ ok: true });
   });
   app.get("/api/admin/keys", (_req, res) =>
     res.json(
-      store.all(
-        "SELECT id,name,prefix,created,last_used,revoked FROM gateway_keys ORDER BY created DESC",
-      ),
+      store
+        .all(
+          "SELECT id,name,prefix,created,last_used,revoked FROM gateway_keys ORDER BY created DESC",
+        )
+        .map((k) => {
+          const q = poolSummary(store, k.id);
+          return {
+            ...k,
+            keyUsedQuota: q.keyUsedQuota,
+            keyKnownUsed: q.keyKnownUsed,
+            keyUnknownRequests: q.keyUnknownRequests,
+            keyUsageSince: q.keyUsageSince,
+          };
+        }),
     ),
   );
   app.post("/api/admin/keys", (req, res) => {
@@ -366,9 +404,10 @@ export function createApp(config: AppConfig) {
     );
     res.json({
       stats,
+      superQuota: poolSummary(store),
       providers: store.providers().map(cleanProvider),
       groups: store.groups(),
-      aliases: store.aliases(),
+      aliases: availableAliases(store),
       keys: store.get("SELECT COUNT(*) count FROM gateway_keys WHERE revoked=0")
         .count,
       recent: store.all("SELECT * FROM usage ORDER BY created DESC LIMIT 8"),
@@ -419,13 +458,16 @@ export function createApp(config: AppConfig) {
   app.get("/v1/models", (_req, res) =>
     res.json({
       object: "list",
-      data: store.aliases().map((a) => ({
+      data: availableAliases(store).map((a) => ({
         id: a.name,
         object: "model",
         created: 0,
         owned_by: "keypool",
       })),
     }),
+  );
+  app.get("/v1/quota", (_req, res) =>
+    res.json(poolSummary(store, res.locals.keyId)),
   );
   // Gateway and provider tests are registered through this hook before final middleware.
   (app as any).keypool = { config, owner };

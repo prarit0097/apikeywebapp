@@ -118,6 +118,79 @@ const body = {
   max_tokens: 32,
 };
 
+test("super alias automatically pools separate platforms without manually creating an alias", async () => {
+  const { app, store, p } = setup(async () => good());
+  store.run("DELETE FROM aliases");
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "super" });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.model, "super");
+  const q = await request(app).get("/v1/quota").set("X-Api-Key", "kp_test");
+  assert.equal(q.status, 200);
+  assert.equal(q.body.usedQuota, 15);
+  assert.equal(q.body.keyUsedQuota, 15);
+  assert.equal(q.body.balanceQuota, 99985);
+  assert.ok(!JSON.stringify(q.body).includes("provider-secret"));
+  store.close();
+});
+
+test("super routing reaches the fourth independent key after three rate-limited keys", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () =>
+    ++calls <= 3 ? response([], 429, { "retry-after": "60" }) : good(),
+  );
+  for (let i = 1; i <= 3; i++) {
+    store.saveGroup({ id: `g${i}`, allowance: 100000, period: "daily" });
+    store.saveProvider({
+      ...p,
+      id: `p${i}`,
+      quotaGroup: `g${i}`,
+      priority: i + 1,
+    });
+  }
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "super" });
+  assert.equal(r.status, 200);
+  assert.equal(calls, 4);
+  store.close();
+});
+
+test("explicit credit exhaustion switches to the next independent pool and does not leak upstream error text", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () => {
+    calls++;
+    if (calls > 1) return good();
+    async function* errors() {
+      yield Buffer.from(
+        JSON.stringify({
+          error: {
+            code: "insufficient_quota",
+            message: "secret-sensitive-provider-detail",
+          },
+        }),
+      );
+    }
+    return { statusCode: 402, headers: {}, body: errors() };
+  });
+  store.saveGroup({ id: "other", allowance: 100000, period: "daily" });
+  store.saveProvider({ ...p, id: "p2", quotaGroup: "other", priority: 2 });
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "super" });
+  assert.equal(r.status, 200);
+  assert.equal(calls, 2);
+  assert.ok(!r.text.includes("secret-sensitive"));
+  assert.ok(
+    store.groups().find((g) => g.id === "group")!.cooldownUntil > Date.now(),
+  );
+  store.close();
+});
+
 test("authenticated gateway translates actual upstream text, accounts usage and keeps secrets out of responses", async () => {
   const { app, store } = setup(async () => good());
   const r = await request(app)
@@ -380,5 +453,38 @@ test("an in-flight provider test cannot restore an old key or overwrite current 
   assert.equal(store.provider("p")!.encryptedKey, "new-secret-ciphertext");
   assert.equal(store.provider("p")!.priority, 99);
   assert.equal(store.provider("p")!.enabled, false);
+  store.close();
+});
+
+test("native Anthropic low-credit rejection fails over to an independent platform", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () => {
+    calls++;
+    if (calls > 1) return good();
+    async function* errors() {
+      yield Buffer.from(
+        JSON.stringify({
+          error: {
+            type: "invalid_request_error",
+            message: "Your credit balance is too low to access the API.",
+          },
+        }),
+      );
+    }
+    return { statusCode: 400, headers: {}, body: errors() };
+  });
+  store.saveProvider({
+    ...p,
+    adapter: "anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+  });
+  store.saveGroup({ id: "other", allowance: 100000, period: "daily" });
+  store.saveProvider({ ...p, id: "p2", quotaGroup: "other", priority: 2 });
+  const r = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "super" });
+  assert.equal(r.status, 200);
+  assert.equal(calls, 2);
   store.close();
 });

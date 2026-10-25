@@ -64,6 +64,8 @@ export class Store {
  CREATE TABLE IF NOT EXISTS reservations(id TEXT PRIMARY KEY,group_id TEXT NOT NULL,amount INTEGER NOT NULL,created INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS usage(id TEXT PRIMARY KEY,created INTEGER NOT NULL,alias TEXT NOT NULL,provider TEXT NOT NULL,key_id TEXT,success INTEGER NOT NULL,input_tokens INTEGER,output_tokens INTEGER,latency INTEGER NOT NULL,error TEXT);
  CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS key_usage(key_id TEXT PRIMARY KEY,tokens INTEGER NOT NULL DEFAULT 0,unknown_requests INTEGER NOT NULL DEFAULT 0,since INTEGER NOT NULL);
+ CREATE TABLE IF NOT EXISTS migrations(id TEXT PRIMARY KEY,applied INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS usage_created ON usage(created DESC);`);
     const columns = this.all("PRAGMA table_info(quota_groups)").map(
       (c) => c.name,
@@ -75,6 +77,21 @@ export class Store {
     ])
       if (!columns.includes(name))
         this.db.exec(`ALTER TABLE quota_groups ADD COLUMN ${name} ${def}`);
+    if (!this.get("SELECT id FROM migrations WHERE id='key-usage-v1'"))
+      this.transaction(() => {
+        const now = Date.now();
+        for (const row of this.all(
+          `SELECT key_id,COALESCE(SUM(CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL THEN input_tokens+output_tokens ELSE 0 END),0) tokens,SUM(CASE WHEN input_tokens IS NULL OR output_tokens IS NULL THEN 1 ELSE 0 END) unknown_requests,MIN(created) since FROM usage WHERE key_id IS NOT NULL GROUP BY key_id`,
+        ))
+          this.run(
+            "INSERT OR IGNORE INTO key_usage VALUES(?,?,?,?)",
+            row.key_id,
+            row.tokens,
+            row.unknown_requests,
+            row.since || now,
+          );
+        this.run("INSERT INTO migrations VALUES('key-usage-v1',?)", now);
+      });
   }
   close() {
     this.db.close();
@@ -300,19 +317,31 @@ export class Store {
     latency: number;
     error: string | null;
   }) {
-    this.run(
-      "INSERT INTO usage VALUES(?,?,?,?,?,?,?,?,?,?)",
-      event.id,
-      Date.now(),
-      event.alias,
-      event.provider,
-      event.keyId,
-      event.success ? 1 : 0,
-      event.input,
-      event.output,
-      event.latency,
-      event.error,
-    );
+    this.transaction(() => {
+      this.run(
+        "INSERT INTO usage VALUES(?,?,?,?,?,?,?,?,?,?)",
+        event.id,
+        Date.now(),
+        event.alias,
+        event.provider,
+        event.keyId,
+        event.success ? 1 : 0,
+        event.input,
+        event.output,
+        event.latency,
+        event.error,
+      );
+      if (event.keyId)
+        this.run(
+          "INSERT INTO key_usage(key_id,tokens,unknown_requests,since) VALUES(?,?,?,?) ON CONFLICT(key_id) DO UPDATE SET tokens=tokens+excluded.tokens,unknown_requests=unknown_requests+excluded.unknown_requests",
+          event.keyId,
+          event.input !== null && event.output !== null
+            ? event.input + event.output
+            : 0,
+          event.input === null || event.output === null ? 1 : 0,
+          Date.now(),
+        );
+    });
     this.run("DELETE FROM usage WHERE created<?", Date.now() - 90 * 86400000);
   }
 }

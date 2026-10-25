@@ -174,6 +174,37 @@ test("new credentials default to potentially paid instead of assuming free entit
   store.close();
 });
 
+test("provider onboarding initializes a pool allowance once and never multiplies a shared project", async () => {
+  const { app, store } = setup();
+  const { agent, csrf } = await owner(app);
+  const payload = {
+    name: "Free key",
+    adapter: "openai",
+    baseUrl: "https://example.com/v1",
+    apiKey: "fixture-key",
+    quotaGroup: "shared",
+    models: ["model"],
+    paid: false,
+    initialAllowance: 10000000,
+    initialPeriod: "lifetime",
+  };
+  const a = await agent
+    .post("/api/admin/providers")
+    .set("Origin", origin)
+    .set("X-CSRF-Token", csrf)
+    .send(payload);
+  assert.equal(a.status, 201);
+  const b = await agent
+    .post("/api/admin/providers")
+    .set("Origin", origin)
+    .set("X-CSRF-Token", csrf)
+    .send({ ...payload, name: "Second key" });
+  assert.equal(b.status, 201);
+  assert.equal(store.groups().length, 1);
+  assert.equal(store.groups()[0].allowance, 10000000);
+  store.close();
+});
+
 test("gateway key is revealed once, authenticated, revoked, and owner logout invalidates session", async () => {
   const { app, store } = setup();
   const { agent, csrf } = await owner(app);
@@ -221,5 +252,32 @@ test("gateway key is revealed once, authenticated, revoked, and owner logout inv
     200,
   );
   assert.equal((await agent.get("/api/admin/overview")).status, 401);
+  store.close();
+});
+
+test("automatic super routing is visible but cannot be accidentally replaced by a custom alias", async () => {
+  const { app, store } = setup();
+  const { agent, csrf } = await owner(app);
+  const routes = await agent.get("/api/admin/aliases");
+  assert.ok(routes.body.some((a: any) => a.id === "builtin-super"));
+  const r = await agent
+    .post("/api/admin/aliases")
+    .set("Origin", origin)
+    .set("X-CSRF-Token", csrf)
+    .send({
+      name: "super",
+      targets: [{ providerId: "missing", model: "m" }],
+      allowCrossModel: true,
+    });
+  assert.equal(r.status, 400);
+  assert.equal(
+    (
+      await agent
+        .delete("/api/admin/aliases/builtin-super")
+        .set("Origin", origin)
+        .set("X-CSRF-Token", csrf)
+    ).status,
+    400,
+  );
   store.close();
 });

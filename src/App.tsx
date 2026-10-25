@@ -47,6 +47,8 @@ import {
   Power,
   Link2,
 } from "lucide-react";
+import type { PoolSummary } from "../server/pool";
+import SuperQuota from "./SuperQuota";
 
 type Provider = {
   id: string;
@@ -91,6 +93,10 @@ type Key = {
   created: number;
   last_used: number | null;
   revoked: number;
+  keyUsedQuota: number | null;
+  keyKnownUsed: number;
+  keyUnknownRequests: number;
+  keyUsageSince: number;
 };
 type Usage = {
   id: string;
@@ -111,6 +117,7 @@ type Session = {
   origin: string;
 };
 type Overview = {
+  superQuota: PoolSummary;
   stats: {
     requests: number;
     successes: number;
@@ -139,7 +146,7 @@ const number = (n: number | null | undefined) =>
     ? "Unknown"
     : Intl.NumberFormat("en", {
         notation: n >= 10000 ? "compact" : "standard",
-        maximumFractionDigits: 1,
+        maximumFractionDigits: 3,
       }).format(n);
 const date = (n: number | null) =>
   n
@@ -405,25 +412,32 @@ export default function App() {
     },
     [session?.csrf],
   );
-  const refresh = useCallback(async () => {
-    if (!session?.authenticated) return;
-    setLoading(true);
-    try {
-      const [overview, allKeys, logs] = await Promise.all([
-        api("/api/admin/overview"),
-        api("/api/admin/keys"),
-        api("/api/admin/usage"),
-      ]);
-      setData(overview);
-      setKeys(allKeys);
-      setUsage(logs);
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [session?.authenticated, api]);
+  const refreshInFlight = useRef(false);
+  const refresh = useCallback(
+    async (quiet = false) => {
+      if (!session?.authenticated) return;
+      if (refreshInFlight.current) return;
+      refreshInFlight.current = true;
+      if (!quiet) setLoading(true);
+      try {
+        const [overview, allKeys, logs] = await Promise.all([
+          api("/api/admin/overview"),
+          api("/api/admin/keys"),
+          api("/api/admin/usage"),
+        ]);
+        setData(overview);
+        setKeys(allKeys);
+        setUsage(logs);
+        setError("");
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        refreshInFlight.current = false;
+        setLoading(false);
+      }
+    },
+    [session?.authenticated, api],
+  );
   useEffect(() => {
     fetch("/api/session")
       .then((r) => r.json())
@@ -436,6 +450,18 @@ export default function App() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  useEffect(() => {
+    if (!session?.authenticated) return;
+    const tick = () => {
+      if (document.visibilityState === "visible") void refresh(true);
+    };
+    const timer = setInterval(tick, 5000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [session?.authenticated, refresh]);
   useEffect(() => {
     const change = () => {
       const p = location.hash.slice(1) as Page;
@@ -679,6 +705,12 @@ export default function App() {
               ) : null}
             </div>
           </div>
+          {data?.superQuota && (
+            <SuperQuota
+              quota={data.superQuota}
+              onManage={() => go("providers")}
+            />
+          )}
           {loading && !data ? (
             <div className="loading-panel">
               <Loader2 className="spin" />
@@ -799,7 +831,8 @@ export default function App() {
                         </Badge>
                       </div>
                       <p className="muted small">
-                        Your gateway is ready when you are.
+                        The super route automatically includes eligible
+                        providers.
                       </p>
                       <div className="setup-steps">
                         {[
@@ -1099,27 +1132,29 @@ export default function App() {
                                 </span>
                               </div>
                             </div>
-                            <button
-                              className="icon-button"
-                              aria-label={`Delete alias ${a.name}`}
-                              onClick={() =>
-                                setConfirm({
-                                  title: `Delete ${a.name}?`,
-                                  body: "Clients using this alias will stop working until you create it again.",
-                                  action: async () => {
-                                    await mutate(
-                                      () =>
-                                        api(`/api/admin/aliases/${a.id}`, {
-                                          method: "DELETE",
-                                        }),
-                                      "Alias deleted",
-                                    );
-                                  },
-                                })
-                              }
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            {a.id !== "builtin-super" && (
+                              <button
+                                className="icon-button"
+                                aria-label={`Delete alias ${a.name}`}
+                                onClick={() =>
+                                  setConfirm({
+                                    title: `Delete ${a.name}?`,
+                                    body: "Clients using this alias will stop working until you create it again.",
+                                    action: async () => {
+                                      await mutate(
+                                        () =>
+                                          api(`/api/admin/aliases/${a.id}`, {
+                                            method: "DELETE",
+                                          }),
+                                        "Alias deleted",
+                                      );
+                                    },
+                                  })
+                                }
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
                           </div>
                           <div className="route-targets">
                             {a.targets.map((t, i) => (
@@ -1141,15 +1176,24 @@ export default function App() {
                           </div>
                           <div className="route-footer">
                             <Badge tone={a.allowCrossModel ? "amber" : "green"}>
-                              {a.allowCrossModel
-                                ? "CROSS-MODEL OPT-IN"
-                                : "SAME-MODEL ROUTING"}
+                              {a.id === "builtin-super"
+                                ? "AUTOMATIC · ALL ELIGIBLE PROVIDERS"
+                                : a.allowCrossModel
+                                  ? "CROSS-MODEL OPT-IN"
+                                  : "SAME-MODEL ROUTING"}
                             </Badge>
                             <button
                               className="text-button"
-                              onClick={() => setAliasModal(a)}
+                              onClick={() =>
+                                a.id === "builtin-super"
+                                  ? go("providers")
+                                  : setAliasModal(a)
+                              }
                             >
-                              Edit route <ArrowRight size={14} />
+                              {a.id === "builtin-super"
+                                ? "Manage providers"
+                                : "Edit route"}{" "}
+                              <ArrowRight size={14} />
                             </button>
                           </div>
                         </section>
@@ -1196,6 +1240,7 @@ export default function App() {
                             <th>PREFIX</th>
                             <th>CREATED</th>
                             <th>LAST USED</th>
+                            <th>USED BY THIS SUPER KEY</th>
                             <th>STATUS</th>
                             <th />
                           </tr>
@@ -1214,6 +1259,16 @@ export default function App() {
                               </td>
                               <td>{date(k.created)}</td>
                               <td>{date(k.last_used)}</td>
+                              <td>
+                                <strong className="mono">
+                                  {number(k.keyUsedQuota)}
+                                </strong>
+                                <small className="cell-sub">
+                                  {k.keyUnknownRequests
+                                    ? `${number(k.keyKnownUsed)} known + ${k.keyUnknownRequests} uncertain`
+                                    : `Recorded since ${date(k.keyUsageSince)}`}
+                                </small>
+                              </td>
                               <td>
                                 <Badge tone={k.revoked ? "neutral" : "green"}>
                                   {k.revoked ? "Revoked" : "Active"}
@@ -1267,9 +1322,9 @@ export default function App() {
                     </Empty>
                   )}
                   <div className="panel-footnote">
-                    <ShieldCheck size={15} /> Gateway keys provide access to
-                    your configured routes. Keep them private and revoke unused
-                    keys.
+                    <ShieldCheck size={15} /> Gateway keys are your super keys.
+                    They share the pool above and provide access to your
+                    configured routes. Keep them private and revoke unused keys.
                   </div>
                 </section>
               )}
@@ -1909,6 +1964,14 @@ function ProviderForm({
       allowPaid: f.get("allowPaid") === "on",
       tools: f.get("tools") === "on",
       contextLimit: f.get("context") ? Number(f.get("context")) : null,
+      ...(!provider
+        ? {
+            initialPeriod: String(f.get("period")),
+            ...(f.get("allowance") !== ""
+              ? { initialAllowance: Number(f.get("allowance")) }
+              : {}),
+          }
+        : {}),
       ...(f.get("apiKey") ? { apiKey: String(f.get("apiKey")) } : {}),
     };
     try {
@@ -2006,6 +2069,29 @@ function ProviderForm({
             maxLength={100}
           />
         </Field>
+        {!provider && (
+          <div className="form-grid">
+            <Field
+              label="New pool token allowance"
+              hint="Optional. Shared groups keep their existing allowance; entering a second key never adds the same quota twice."
+            >
+              <input
+                name="allowance"
+                type="number"
+                min={0}
+                max={1000000000000}
+                placeholder="e.g. 10000000"
+              />
+            </Field>
+            <Field label="Allowance period">
+              <select name="period" defaultValue="lifetime">
+                <option value="lifetime">Fixed / lifetime budget</option>
+                <option value="daily">Daily (UTC reset)</option>
+                <option value="monthly">Monthly (UTC reset)</option>
+              </select>
+            </Field>
+          </div>
+        )}
         <Field
           label="Exact model IDs"
           hint="Use IDs from your provider's console. Separate with commas or new lines."
@@ -2496,7 +2582,11 @@ function Connect({
   providers: Provider[];
   onCreateKey: () => void;
 }) {
-  const [alias, setAlias] = useState(aliases[0]?.name || ""),
+  const [alias, setAlias] = useState(
+      aliases.find((a) => a.name === "super")?.name ||
+        aliases[0]?.name ||
+        "super",
+    ),
     [shell, setShell] = useState("powershell"),
     [testKey, setTestKey] = useState(""),
     [testResult, setTestResult] = useState(""),

@@ -14,6 +14,7 @@ export class UpstreamError extends Error {
   constructor(
     public status: number,
     public retryAfter: number | null = null,
+    public quotaExhausted = false,
   ) {
     super(`Upstream returned HTTP ${status}`);
   }
@@ -143,10 +144,46 @@ export async function* providerEvents(
     version,
   );
   if (r.statusCode < 200 || r.statusCode >= 300) {
-    await discard(r);
+    let value: any;
+    let content = "";
+    try {
+      for await (const chunk of r.body) {
+        content += Buffer.from(chunk).toString("utf8");
+        if (content.length > 65536) break;
+      }
+      value = JSON.parse(content);
+    } catch {
+      /* never expose provider body */
+    } finally {
+      await discard(r);
+    }
+    const code = String(
+      value?.error?.code || value?.error?.type || value?.error?.status || "",
+    ).toLowerCase();
+    const nativeLowCredit =
+      p.adapter === "anthropic" &&
+      new URL(p.baseUrl).hostname === "api.anthropic.com" &&
+      r.statusCode === 400 &&
+      /credit balance is too low|insufficient credits|reached.*spend limit|exceed.*spend limit/i.test(
+        String(value?.error?.message || ""),
+      );
+    const quotaExhausted =
+      nativeLowCredit ||
+      [
+        "insufficient_quota",
+        "quota_exceeded",
+        "quota_exhausted",
+        "resource_exhausted",
+        "insufficient_credits",
+        "credit_balance_exhausted",
+        "tokens_exhausted",
+        "daily_limit_exceeded",
+      ].includes(code) ||
+      (r.statusCode === 402 && new URL(p.baseUrl).hostname === "openrouter.ai");
     throw new UpstreamError(
       r.statusCode,
       r.statusCode === 429 ? retryDelay(r.headers["retry-after"]) : null,
+      quotaExhausted,
     );
   }
   try {

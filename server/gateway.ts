@@ -13,6 +13,7 @@ import {
   ProtocolError,
 } from "./protocol.js";
 import { providerEvents, UpstreamError, testProvider } from "./providers.js";
+import { availableAliases } from "./pool.js";
 
 const messageSchema = z
   .object({
@@ -89,7 +90,9 @@ export function mountGateway(app: Express) {
         if (e instanceof ProtocolError) throw new HttpError(400, e.message);
         throw e;
       }
-      const alias = store.aliases().find((a) => a.name === message.model);
+      const alias = availableAliases(store).find(
+        (a) => a.name === message.model,
+      );
       if (!alias)
         throw new HttpError(
           404,
@@ -110,7 +113,7 @@ export function mountGateway(app: Express) {
             (!p.paid || p.allowPaid) &&
             (!message.tools?.length || p.tools),
         );
-      const rotation = cursor++;
+      const rotation = alias.name === "super" ? 0 : cursor++;
       candidates.sort(
         (a, b) =>
           a.provider!.priority - b.provider!.priority ||
@@ -135,7 +138,7 @@ export function mountGateway(app: Express) {
         unsupported: string | undefined;
       try {
         for (const { provider: p, target } of candidates) {
-          if (!p || ctl.signal.aborted || attempts >= 3) break;
+          if (!p || ctl.signal.aborted) break;
           if (p.contextLimit && reservationSize > p.contextLimit) continue;
           if (
             p.paid &&
@@ -351,8 +354,8 @@ export function mountGateway(app: Express) {
               provider: p.name,
               keyId: res.locals.keyId,
               success: false,
-              input,
-              output,
+              input: rejected ? 0 : input,
+              output: rejected ? 0 : output,
               latency: Date.now() - started,
               error: reason,
             });
@@ -362,13 +365,14 @@ export function mountGateway(app: Express) {
                 status: "credentials_rejected",
               });
             }
-            if (rejected && e.status === 429)
+            if (rejected && (e.status === 429 || e.quotaExhausted))
               store.cooldown(
                 p.quotaGroup,
-                Date.now() + (e.retryAfter || 60000),
+                Date.now() +
+                  (e.retryAfter || (e.quotaExhausted ? 24 * 3600000 : 60000)),
               );
             if (streamingStarted) {
-              if (!res.destroyed)
+              if (!res.destroyed && !res.writableEnded)
                 res.end(
                   format === "anthropic"
                     ? `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: `${reason}. Request ID: ${requestId}` } })}\n\n`
@@ -380,7 +384,10 @@ export function mountGateway(app: Express) {
               rejected && e.status === 429 ? 429 : 502,
               `${reason}. Request ID: ${requestId}`,
             );
-            if (!rejected || ![401, 403, 429, 503].includes(e.status))
+            if (
+              !rejected ||
+              !([401, 403, 429, 503].includes(e.status) || e.quotaExhausted)
+            )
               throw lastError;
           } finally {
             await iterator?.return(undefined as any).catch(() => {});
