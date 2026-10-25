@@ -2526,6 +2526,18 @@ function Connect({
           </div>
           <Badge>GATEWAY</Badge>
         </div>
+        {!providers.some((p) => p.enabled && (!p.paid || p.allowPaid)) && (
+          <div className="alert info" role="status">
+            <AlertCircle size={18} />
+            <span>
+              No eligible provider is active. Model discovery will be empty and
+              inference cannot run yet. Open <a href="#providers">Providers</a>
+              {providers.some((p) => p.status === "billing_unverified")
+                ? " and refresh detection. A saved provider has unverified pricing; detected models alone do not confirm a free allowance. It remains blocked until its billing eligibility is verified."
+                : " to connect an available provider or review paused connections."}
+            </span>
+          </div>
+        )}
         <div className="desktop-settings">
           {[
             ["Connection provider", "Gateway"],

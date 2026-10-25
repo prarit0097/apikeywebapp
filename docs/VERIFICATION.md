@@ -5,6 +5,15 @@ Source: https://github.com/prarit0097/apikeywebapp
 App directory: `/opt/apikeywebapp`
 Initial application code revision: `4a5d63c`. Latest super-key upgrade code: `74b8533` (subsequent documentation/test-selector commits do not change the deployed application).
 
+## Claude Desktop compatibility and two-field onboarding
+
+- Application code `3cec3e7` adds automatic exact discovered model routes, same-model failover, explicit alias precedence, Anthropic/OpenAI model discovery metadata, pagination and model detail lookup. Unknown Claude IDs are never silently mapped to unrelated models.
+- 67 automated tests passed; production typecheck/build passed. The admin fixture now mounts gateway routes in the same order as production. Browser acceptance covers Desktop instructions, root URL, x-api-key, model discovery, conservative 1M settings, preserved Code setup, two-field create/edit, masked keys and 375px layout with no console errors.
+- Connect apps now documents all screenshot settings. OpenAI translation still supports only the implemented text/function tool subset; thinking, caching, images and server/deferred tools remain unsupported. No full Desktop/Cowork or real external-model execution claim is made.
+- Two-field onboarding from `57932ba` detects name, format, models and supported metadata using same-origin read-only probes. Unknown balances stay unknown. Conservative account grouping, paid-price precedence, external-usage offsets and concurrent owner edits are tested.
+- Public authenticated metadata and quota checks passed after deployment using a temporary credential removed immediately afterward. No real provider generation was invoked. Live discovery returned zero eligible models: the saved provider has 33 detected models but unverified billing and remains paused. The connection page explicitly explains this blocker; it does not fabricate free eligibility.
+- Dedicated container healthy; all 17 unrelated container IDs unchanged. Online pre-upgrade SQLite backup: `/opt/apikeywebapp/backups/pre-desktop-20261025.sqlite`. Public HTTPS/auth/CSP/mobile checks passed. Historical release observations below describe their original test times, not current owner configuration.
+
 ## Super-key upgrade verification
 
 - User's three requirements implemented: automatic multi-platform `super` route, safe exhaustion fallback, and live total/used/reserved/balance plus cumulative per-key usage. Provider onboarding accepts a new pool's allowance and period; shared groups never duplicate it.
