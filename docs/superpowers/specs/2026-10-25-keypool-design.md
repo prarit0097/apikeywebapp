@@ -46,6 +46,7 @@ These are builder recommendations, not choices the user has individually confirm
 - A pinned supported Node LTS container, with dependencies locked in the repository.
 - Dedicated Docker Compose project and a loopback-only host port selected after checking availability. Existing Nginx terminates TLS and proxies only this domain.
 - Dedicated application folder /opt/apikeywebapp; domain-specific Nginx configuration. Do not alter unrelated sites, ports, databases or services.
+- User explicitly requires folder isolation because multiple apps run on the server: keep this app's source, Compose files, secrets, persistent database and backups under /opt/apikeywebapp with appropriately restricted subdirectories. Use a unique Compose project name and dedicated network; do not share another app's database or Redis. Only the domain-specific proxy/certificate integration lives in the existing system Nginx/Let's Encrypt locations. Validate Nginx and use a graceful reload, never a server-wide service stop or Docker cleanup.
 - Single owner account, no public registration. First setup uses a random server-side bootstrap token that is never committed or placed in public URLs. Owner chooses their password through HTTPS. Setup closes atomically after the account is created.
 
 ## Pages and UX
