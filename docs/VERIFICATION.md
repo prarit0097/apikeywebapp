@@ -3,9 +3,20 @@
 Production: https://api.praritsidana.com
 Source: https://github.com/prarit0097/apikeywebapp
 App directory: `/opt/apikeywebapp`
-Application code revision: `4a5d63c` (subsequent documentation commits do not change the deployed application).
+Initial application code revision: `4a5d63c`. Latest super-key upgrade code: `74b8533` (subsequent documentation/test-selector commits do not change the deployed application).
 
-## Evidence
+## Super-key upgrade verification
+
+- User's three requirements implemented: automatic multi-platform `super` route, safe exhaustion fallback, and live total/used/reserved/balance plus cumulative per-key usage. Provider onboarding accepts a new pool's allowance and period; shared groups never duplicate it.
+- **48 automated tests passed** and production build/typecheck passed. A fresh review found daily-reset cooldown and quota-related 403 recovery issues; both were reproduced RED, fixed, and included in the green suite. No deferred minor findings.
+- Browser acceptance used four fake credentials across three independent fixture pools: 10M + 3M + 3B = **3,013,000,000**. The fourth credential shared pool A and did not inflate the total. An explicit exhausted response on A automatically fell back to B.
+- Requests using both Anthropic and OpenAI client formats consumed 30 reported fixture tokens through the same key; the dashboard's five-second refresh showed **3,012,999,970** balance and 30 key usage without clicking Refresh. Desktop and mobile had no runtime errors or page overflow.
+- Authenticated live-production `GET /v1/quota` returned 200 and model discovery included `super`. The temporary verification credential was removed after checking. No real upstream generation was invoked. Production still has no owner/provider credentials configured, so live capacity correctly shows zero until onboarding.
+- External HTTPS, authentication boundaries, strict CSP and mobile owner-setup checks passed after deployment. All 17 unrelated containers retained their IDs. A pre-upgrade online SQLite backup was verified at `/opt/apikeywebapp/backups/pre-superkey-20261025.sqlite`; migrations are additive and retain existing provider/key records.
+- Installed Claude Code's controlled tool-loop probe still passed. Real-provider entitlement and actual model capability remain unverified until the owner adds real keys.
+- Implementation decisions: automatic pooling uses the first configured model per eligible provider and may change models on failover, as requested. Existing explicitly configured custom `super` aliases preserve their scope. Unknown or incompatible reset schedules yield separate estimated subtotals, not a fabricated exact grand total. Per-key counters are cumulative, while each shared pool's usage follows its own reset window. Direct-to-provider usage cannot be measured by this gateway.
+
+## Initial release evidence
 
 - 35 automated tests passed, including owner setup race, sessions/CSRF, provider secret encryption, key revocation, IP/URL restrictions, Docker proxy client-IP separation, shared quota reservations, period/timezone reset, RPM/TPM, persistent uncertain reservations, paid budget guards, key rotation races, text/tools, native headers/thinking, incomplete streams and cancellation.
 - TypeScript checks and Vite/server production builds passed on local Node 24 and in the production Docker build. Production dependency audit reported zero known vulnerabilities.

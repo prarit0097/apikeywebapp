@@ -52,7 +52,7 @@ await page.getByLabel("Gateway key for connection test").fill(key);
 await page.getByRole("button", { name: "Test", exact: true }).click();
 await page
   .getByText(
-    "Connected. 1 model alias available. Live generation remains unverified.",
+    "Connected. 2 model aliases available. Live generation remains unverified.",
   )
   .waitFor();
 await page.screenshot({ path: ".private/connect-desktop.png", fullPage: true });
