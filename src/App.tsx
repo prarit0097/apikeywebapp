@@ -2488,6 +2488,14 @@ function Connect({
         (t) =>
           providers.find((p) => p.id === t.providerId)?.adapter === "anthropic",
       );
+  const desktopModels = [
+    ...new Set(
+      providers
+        .filter((p) => p.enabled && (!p.paid || p.allowPaid))
+        .flatMap((p) => p.models)
+        .filter((model) => /(^|\/)claude-/i.test(model)),
+    ),
+  ];
   const vars = [
     ["ANTHROPIC_BASE_URL", origin],
     ["ANTHROPIC_AUTH_TOKEN", "<your-gateway-key>"],
@@ -2556,36 +2564,51 @@ function Connect({
             </div>
           ))}
         </div>
-        <div className="desktop-model-choice">
-          <Field label="Gateway alias for Claude Desktop">
-            <select value={alias} onChange={(e) => setAlias(e.target.value)}>
-              {aliases.map((a) => (
-                <option key={a.id} value={a.name}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <CopyButton value={alias} label="Copy model ID" />
-        </div>
+        {desktopModels.length ? (
+          <div
+            className="desktop-settings"
+            aria-label="Available Claude model IDs"
+          >
+            {desktopModels.map((model) => (
+              <div className="desktop-setting" key={model}>
+                <span>Claude model ID</span>
+                <strong>{model}</strong>
+                <CopyButton value={model} label={`Copy model ID ${model}`} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="alert info" role="status">
+            <AlertCircle size={18} />
+            <span>
+              <strong>No compatible Claude model available.</strong> Your active
+              providers do not currently expose an eligible Claude model. Free
+              non-Claude pool routes can be used with the Claude Code terminal
+              instructions below or an OpenAI-compatible client; they do not
+              satisfy this Desktop model requirement.
+            </span>
+          </div>
+        )}
         <p className="muted small">
           Turn on model discovery, then use Test model discovery and select an
-          ID returned by this gateway. If a manual model list overrides
-          discovery, remove unavailable entries such as{" "}
-          <code>claude-opus-5.5</code>
-          and use the gateway alias shown above, or an exact ID returned by
-          discovery. Then Save Changes, Apply Changes and Test connection.
+          available Claude model ID returned by this gateway. If a manual model
+          list overrides discovery, remove unavailable entries such as{" "}
+          <code>claude-opus-5.5</code> unless that exact model is available. The
+          tested Claude Desktop version rejects non-Claude entries such as{" "}
+          <code>super</code> in its manual model list. Use an actual Claude
+          model ID shown above, then Save Changes, Apply Changes and Test
+          connection.
         </p>
         <div className="alert info">
           <AlertCircle size={18} />
           <span>
-            <code>super</code> pools eligible providers and can switch between
-            different models. It does not turn another model into Claude. Tools
-            and other capabilities depend on the selected upstream model. OpenAI
-            translation supports text and function tools; images, extended
-            thinking, prompt caching, server tools and deferred tools are
-            unsupported. This setup does not establish full Desktop or Cowork
-            compatibility.
+            <code>super</code> is for clients that accept pooled aliases and can
+            switch between different models. It does not turn another model into
+            Claude. Tools and other capabilities depend on the selected upstream
+            model. OpenAI translation supports text and function tools; images,
+            extended thinking, prompt caching, server tools and deferred tools
+            are unsupported. This setup does not establish full Desktop or
+            Cowork compatibility.
           </span>
         </div>
         <details className="desktop-details">

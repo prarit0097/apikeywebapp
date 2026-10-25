@@ -191,11 +191,15 @@ try {
     await settings.filter({ hasText: "Model discovery" }).innerText(),
     /On/,
   );
-  assert.equal(
-    await desktopGuide
-      .getByLabel("Gateway alias for Claude Desktop")
-      .inputValue(),
-    "super",
+  assert.match(
+    await desktopGuide.innerText(),
+    /No compatible Claude model available/,
+  );
+  assert.equal(await desktopGuide.locator("select").count(), 0);
+  assert.match(await desktopGuide.innerText(), /rejects non-Claude entries/);
+  assert.match(
+    await desktopGuide.innerText(),
+    /do not satisfy this Desktop model requirement/,
   );
   assert.match(await desktopGuide.innerText(), /remove unavailable entries/);
   assert.match(

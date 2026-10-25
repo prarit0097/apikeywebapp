@@ -388,14 +388,11 @@ test("an in-flight rediscovery cannot undo a concurrent owner pause", async () =
   mountGateway(app);
   finishApp(app);
   const agent = request.agent(app);
-  const s = await agent
-    .post("/api/setup")
-    .set("Origin", c.origin)
-    .send({
-      token: c.bootstrapToken,
-      email: "owner@example.com",
-      password: "strong-password-123",
-    });
+  const s = await agent.post("/api/setup").set("Origin", c.origin).send({
+    token: c.bootstrapToken,
+    email: "owner@example.com",
+    password: "strong-password-123",
+  });
   const created = await agent
     .post("/api/admin/providers/connect")
     .set("Origin", c.origin)
@@ -415,5 +412,122 @@ test("an in-flight rediscovery cannot undo a concurrent owner pause", async () =
   release();
   assert.equal((await pending).status, 409);
   assert.equal(c.store.provider(id)!.enabled, false);
+  c.store.close();
+});
+
+test("Nara public free plan enables only authenticated entitled models without importing public allowance", async () => {
+  const calls: any[] = [];
+  const c = config(async (url: URL, options: any) => {
+    calls.push({ url: String(url), ...options });
+    if (url.pathname === "/v1/models")
+      return json({
+        data: [{ id: "laguna-s-2.1" }, { id: "claude-opus-5.5" }],
+      });
+    if (url.pathname === "/api/plans")
+      return json({
+        data: [
+          {
+            code: "free",
+            is_active: true,
+            price_daily_idr: 0,
+            price_weekly_idr: 0,
+            token_cap_daily: 7000000,
+            rpm_limit: 15,
+            models: ["laguna-s-2.1", "not-entitled"],
+          },
+        ],
+      });
+    return json({}, 404);
+  });
+  const result = await discoverProvider(c, {
+    baseUrl: "https://router.bynara.id/v1",
+    apiKey: "fixture-nara-key",
+  });
+  assert.equal(result.provider.enabled, true);
+  assert.equal(result.provider.paid, false);
+  assert.deepEqual(result.provider.models, ["laguna-s-2.1"]);
+  assert.equal(result.tokenQuota, null);
+  const planCall = calls.find((c) => c.url.endsWith("/api/plans"));
+  assert.equal(planCall.method, "GET");
+  assert.equal(planCall.headers.Authorization, undefined);
+  assert.equal(planCall.headers["x-api-key"], undefined);
+  assert.ok(planCall.headers["User-Agent"]);
+  assert.ok(!JSON.stringify(planCall).includes("fixture-nara-key"));
+  assert.match(result.provider.discovery!.notes.join(" "), /free plan/i);
+  c.store.close();
+});
+
+test("Nara free plan metadata cannot override explicit prices or enable unverified plans", async () => {
+  const validPlan = {
+    code: "free",
+    is_active: true,
+    price_daily_idr: 0,
+    price_weekly_idr: 0,
+    models: ["chat"],
+  };
+  for (const entry of [
+    { plan: { ...validPlan, is_active: false } },
+    { plan: { ...validPlan, code: "paid" } },
+    { plan: { ...validPlan, price_daily_idr: 5 } },
+    { plan: { ...validPlan, price_weekly_idr: null } },
+    { plan: { ...validPlan, price_daily_idr: "" } },
+    { plan: { ...validPlan, models: ["other"] } },
+    { plan: validPlan, model: { pricing: { prompt: 0, completion: 0.1 } } },
+    { plan: validPlan, model: { pricing: { request: 1 } } },
+    { plan: validPlan, model: { pricing: { input: 1, output: 1 } } },
+    { plan: validPlan, status: 403 },
+  ]) {
+    const c = config(async (url: URL) =>
+      url.pathname.endsWith("/models")
+        ? json({ data: [{ id: "chat", ...entry.model }] })
+        : url.pathname === "/api/plans"
+          ? json({ data: [entry.plan] }, entry.status || 200)
+          : json({}, 404),
+    );
+    const result = await discoverProvider(c, {
+      baseUrl: "https://router.bynara.id/v1",
+      apiKey: "fixture-nara-key",
+    });
+    assert.equal(result.provider.enabled, false, JSON.stringify(entry));
+    assert.equal(result.provider.status, "billing_unverified");
+    assert.equal(result.tokenQuota, null);
+    c.store.close();
+  }
+});
+
+test("Nara public-plan policy is restricted to its exact official hostname", async () => {
+  const calls: string[] = [];
+  const c = config(async (url: URL) => {
+    calls.push(String(url));
+    return json({ data: [{ id: "laguna-s-2.1" }] });
+  });
+  const result = await discoverProvider(c, {
+    baseUrl: "https://example.com/v1",
+    apiKey: "fixture-private-key",
+  });
+  assert.equal(result.provider.enabled, false);
+  assert.equal(
+    calls.some((url) => url.endsWith("/api/plans")),
+    false,
+  );
+  c.store.close();
+});
+
+test("free flags cannot bypass standalone per-request or input pricing", async () => {
+  const c = config(async (url: URL) =>
+    url.pathname.endsWith("/models")
+      ? json({
+          data: [
+            { id: "chat", free: true, pricing: { request: 1 } },
+            { id: "other", is_free: true, pricing: { input: "0.01" } },
+          ],
+        })
+      : json({}, 404),
+  );
+  const result = await discoverProvider(c, {
+    baseUrl: "https://example.com/v1",
+    apiKey: "fixture-private-key",
+  });
+  assert.equal(result.provider.enabled, false);
   c.store.close();
 });

@@ -350,9 +350,68 @@ export async function discoverProvider(
         !m.id.includes(apiKey) &&
         chat(m),
     );
-  const freeModels = models.filter((m: any) =>
-    free(m, new URL(provider.baseUrl).hostname),
-  );
+  const host = new URL(provider.baseUrl).hostname;
+  const planFreeModels = new Set<string>();
+  if (host === "router.bynara.id" && models.length && !signal.aborted) {
+    try {
+      // Nara's authenticated model list reports entitlement, not pricing. Its
+      // public free-plan catalogue supplies the missing free eligibility.
+      const result = await readJson(
+        await (config.providerFetch || safeRequest)(
+          new URL("/api/plans", origin),
+          {
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+              "User-Agent": "Mozilla/5.0",
+            },
+            signal,
+          },
+        ),
+      );
+      if (result.status === 200 && Array.isArray(result.value?.data)) {
+        for (const plan of result.value.data.slice(0, 100)) {
+          if (
+            plan?.code === "free" &&
+            plan.is_active === true &&
+            zero(plan.price_daily_idr) &&
+            zero(plan.price_weekly_idr) &&
+            Array.isArray(plan.models)
+          ) {
+            for (const id of plan.models.slice(0, 1000))
+              if (typeof id === "string") planFreeModels.add(id);
+          }
+        }
+      }
+    } catch {
+      // Missing public metadata never establishes free eligibility.
+    }
+  }
+  const priceFields = [
+    "prompt",
+    "completion",
+    "request",
+    "input",
+    "output",
+    "web_search",
+    "internal_reasoning",
+    "cache_read",
+    "cache_write",
+  ];
+  const freeModels = models.filter((m: any) => {
+    if (
+      priceFields.some(
+        (key) =>
+          m.pricing && Object.hasOwn(m.pricing, key) && !zero(m.pricing[key]),
+      )
+    )
+      return false;
+    return free(m, host) || planFreeModels.has(m.id);
+  });
+  if (freeModels.some((m: any) => planFreeModels.has(m.id)))
+    notes.push(
+      "Free eligibility confirmed by the official public free plan and authenticated model entitlement; public plan caps are not an account balance",
+    );
   const selected = (freeModels.length ? freeModels : models)
     .sort(
       (a: any, b: any) =>
