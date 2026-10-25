@@ -359,18 +359,29 @@ export function mountGateway(app: Express) {
               latency: Date.now() - started,
               error: reason,
             });
-            if (rejected && (e.status === 401 || e.status === 403)) {
+            if (
+              rejected &&
+              !e.quotaExhausted &&
+              (e.status === 401 || e.status === 403)
+            ) {
               store.patchProviderStatus(p, {
                 enabled: false,
                 status: "credentials_rejected",
               });
             }
-            if (rejected && (e.status === 429 || e.quotaExhausted))
+            if (rejected && (e.status === 429 || e.quotaExhausted)) {
+              const resetAt = store
+                .groups()
+                .find((g) => g.id === p.quotaGroup)?.resetAt;
+              const quotaDelay = resetAt
+                ? Math.max(1, resetAt - Date.now())
+                : 24 * 3600000;
               store.cooldown(
                 p.quotaGroup,
                 Date.now() +
-                  (e.retryAfter || (e.quotaExhausted ? 24 * 3600000 : 60000)),
+                  (e.retryAfter || (e.quotaExhausted ? quotaDelay : 60000)),
               );
+            }
             if (streamingStarted) {
               if (!res.destroyed && !res.writableEnded)
                 res.end(

@@ -488,3 +488,49 @@ test("native Anthropic low-credit rejection fails over to an independent platfor
   assert.equal(calls, 2);
   store.close();
 });
+
+test("daily quota cooldown expires at reset instead of blocking replenished tokens for 24 hours", async (t) => {
+  let calls = 0;
+  const { app, store } = setup(async () => {
+    calls++;
+    if (calls > 1) return good();
+    async function* errors() {
+      yield Buffer.from('{"error":{"code":"daily_limit_exceeded"}}');
+    }
+    return { statusCode: 400, headers: {}, body: errors() };
+  });
+  const reset = store.groups()[0].resetAt!;
+  t.mock.timers.enable({ apis: ["Date"], now: reset - 1000 });
+  try {
+    await request(app)
+      .post("/v1/messages")
+      .set("X-Api-Key", "kp_test")
+      .send({ ...body, model: "super" });
+    t.mock.timers.setTime(reset + 100);
+    const r = await request(app)
+      .post("/v1/messages")
+      .set("X-Api-Key", "kp_test")
+      .send({ ...body, model: "super" });
+    assert.equal(r.status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    t.mock.timers.reset();
+    store.close();
+  }
+});
+
+test("recognized quota HTTP403 does not permanently disable a valid provider credential", async () => {
+  const { app, store } = setup(async () => {
+    async function* errors() {
+      yield Buffer.from('{"error":{"code":"daily_limit_exceeded"}}');
+    }
+    return { statusCode: 403, headers: {}, body: errors() };
+  });
+  await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "super" });
+  assert.equal(store.provider("p")!.enabled, true);
+  assert.notEqual(store.provider("p")!.status, "credentials_rejected");
+  store.close();
+});
