@@ -724,3 +724,96 @@ test("explicit aliases override discovered model names and exact routes fail ove
   assert.deepEqual(calls, ["manual-model"]);
   store.close();
 });
+
+test("recognized maintenance is sanitized as retryable 503 without disabling credentials or spending quota", async () => {
+  for (const error of [
+    { code: "service_upgrading", type: "maintenance" },
+    { code: "maintenance" },
+    { type: "maintenance" },
+  ]) {
+    const { app, store } = setup(async () => ({
+      statusCode: 503,
+      headers: {},
+      body: (async function* () {
+        yield Buffer.from(
+          JSON.stringify({
+            error: { ...error, message: "provider-secret private detail" },
+          }),
+        );
+      })(),
+    }));
+    const result = await request(app)
+      .post("/v1/messages")
+      .set("X-Api-Key", "kp_test")
+      .send(body);
+    assert.equal(result.status, 503);
+    assert.equal(result.body.error.type, "overloaded_error");
+    assert.match(result.body.error.message, /temporarily under maintenance/i);
+    assert.ok(!result.text.includes("provider-secret"));
+    assert.equal(store.provider("p")!.enabled, true);
+    assert.equal(store.groups()[0].reserved, 0);
+    assert.equal(store.groups()[0].consumed, 0);
+    store.close();
+  }
+});
+
+test("maintenance still fails over safely before streaming to another provider", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () => {
+    calls++;
+    if (calls > 1) return good();
+    return {
+      statusCode: 503,
+      headers: {},
+      body: (async function* () {
+        yield Buffer.from(
+          JSON.stringify({ error: { code: "service_upgrading" } }),
+        );
+      })(),
+    };
+  });
+  store.saveProvider({ ...p, id: "p2", quotaGroup: "group2" });
+  store.saveGroup({ id: "group2", allowance: 100000, period: "daily" });
+  store.saveAlias({
+    id: "a",
+    name: "coding",
+    targets: [
+      { providerId: "p", model: "model" },
+      { providerId: "p2", model: "model" },
+    ],
+    allowCrossModel: false,
+  });
+  const result = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send(body);
+  assert.equal(result.status, 200);
+  assert.equal(calls, 2);
+  assert.equal(store.provider("p")!.enabled, true);
+  assert.equal(store.groups().find((g) => g.id === "group")!.reserved, 0);
+  assert.equal(store.groups().find((g) => g.id === "group")!.consumed, 0);
+  store.close();
+});
+
+test("unrecognized failures never expose raw provider maintenance messages", async () => {
+  for (const [status, error] of [
+    [503, { code: "other", message: "maintenance provider-secret" }],
+    [400, { code: "service_upgrading", type: "maintenance" }],
+  ] as const) {
+    const { app, store } = setup(async () => ({
+      statusCode: status,
+      headers: {},
+      body: (async function* () {
+        yield Buffer.from(JSON.stringify({ error }));
+      })(),
+    }));
+    const result = await request(app)
+      .post("/v1/messages")
+      .set("X-Api-Key", "kp_test")
+      .send(body);
+    assert.equal(result.status, 502);
+    assert.ok(!result.text.includes("provider-secret"));
+    assert.ok(!result.text.includes("temporarily under maintenance"));
+    store.close();
+  }
+});

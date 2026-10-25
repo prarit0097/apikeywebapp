@@ -15,6 +15,7 @@ export class UpstreamError extends Error {
     public status: number,
     public retryAfter: number | null = null,
     public quotaExhausted = false,
+    public maintenance = false,
   ) {
     super(`Upstream returned HTTP ${status}`);
   }
@@ -180,10 +181,17 @@ export async function* providerEvents(
         "daily_limit_exceeded",
       ].includes(code) ||
       (r.statusCode === 402 && new URL(p.baseUrl).hostname === "openrouter.ai");
+    const maintenance =
+      r.statusCode === 503 &&
+      (["service_upgrading", "maintenance"].includes(
+        String(value?.error?.code || "").toLowerCase(),
+      ) ||
+        String(value?.error?.type || "").toLowerCase() === "maintenance");
     throw new UpstreamError(
       r.statusCode,
       r.statusCode === 429 ? retryDelay(r.headers["retry-after"]) : null,
       quotaExhausted,
+      maintenance,
     );
   }
   try {

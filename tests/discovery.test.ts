@@ -531,3 +531,172 @@ test("free flags cannot bypass standalone per-request or input pricing", async (
   assert.equal(result.provider.enabled, false);
   c.store.close();
 });
+
+test("same-origin rediscovery retains an explicit included paid-plan budget and owner pause", async () => {
+  const c = config(async (url: URL) =>
+    url.pathname.endsWith("/models")
+      ? json({
+          data: [
+            {
+              id: "claude-opus-5.5",
+              pricing: { input_per_1k: 0.01, output_per_1k: 0.01 },
+            },
+          ],
+        })
+      : json({}, 404),
+  );
+  const initial = await discoverProvider(c, {
+    baseUrl: "https://oxionai.com/v1",
+    apiKey: "fixture-oxion-key",
+  });
+  assert.equal(initial.provider.enabled, false);
+  c.store.saveGroup({
+    id: initial.provider.quotaGroup,
+    allowance: 200000000,
+    period: "lifetime",
+  });
+  const previous = {
+    ...initial.provider,
+    paid: true,
+    allowPaid: true,
+    enabled: true,
+  };
+  const result = await discoverProvider(
+    c,
+    { baseUrl: "https://oxionai.com/v1" },
+    previous,
+  );
+  assert.equal(result.provider.name, "Oxion AI");
+  assert.equal(result.provider.allowPaid, true);
+  assert.equal(result.provider.paid, true);
+  assert.equal(result.provider.enabled, true);
+  assert.equal(result.provider.status, "connected");
+  assert.match(result.message, /existing.*budget/i);
+  assert.ok(!result.message.includes("free model"));
+  const paused = await discoverProvider(
+    c,
+    { baseUrl: "https://oxionai.com/v1" },
+    { ...previous, enabled: false },
+  );
+  assert.equal(paused.provider.allowPaid, true);
+  assert.equal(paused.provider.enabled, false);
+  assert.match(paused.message, /paused/i);
+  c.store.close();
+});
+
+test("rediscovery never carries paid authorization into an unknown budget or different origin", async () => {
+  for (const allowance of [null, undefined]) {
+    const c = config(async (url: URL) =>
+      url.pathname.endsWith("/models")
+        ? json({ data: [{ id: "chat" }] })
+        : json({}, 404),
+    );
+    const initial = await discoverProvider(c, {
+      baseUrl: "https://oxionai.com/v1",
+      apiKey: "fixture-oxion-key",
+    });
+    if (allowance !== undefined)
+      c.store.saveGroup({
+        id: initial.provider.quotaGroup,
+        allowance,
+        period: "lifetime",
+      });
+    const previous = {
+      ...initial.provider,
+      paid: true,
+      allowPaid: true,
+      enabled: true,
+    };
+    const result = await discoverProvider(
+      c,
+      { baseUrl: "https://oxionai.com/v1" },
+      previous,
+    );
+    assert.equal(result.provider.allowPaid, false);
+    assert.equal(result.provider.enabled, false);
+    c.store.close();
+  }
+  const c = config(async (url: URL) =>
+    url.pathname.endsWith("/models")
+      ? json({ data: [{ id: "chat" }] })
+      : json({}, 404),
+  );
+  const initial = await discoverProvider(c, {
+    baseUrl: "https://oxionai.com/v1",
+    apiKey: "fixture-oxion-key",
+  });
+  c.store.saveGroup({
+    id: initial.provider.quotaGroup,
+    allowance: 200000000,
+    period: "lifetime",
+  });
+  const changed = await discoverProvider(
+    c,
+    { baseUrl: "https://example.com/v1", apiKey: "fixture-different-key" },
+    { ...initial.provider, paid: true, allowPaid: true, enabled: true },
+  );
+  assert.equal(changed.provider.allowPaid, false);
+  assert.equal(changed.provider.enabled, false);
+  c.store.close();
+});
+
+test("per-1k token prices cannot be overridden by a generic free flag", async () => {
+  const c = config(async (url: URL) =>
+    url.pathname.endsWith("/models")
+      ? json({
+          data: [
+            {
+              id: "chat",
+              free: true,
+              pricing: { input_per_1k: 0.01, output_per_1k: 0.01 },
+            },
+          ],
+        })
+      : json({}, 404),
+  );
+  const result = await discoverProvider(c, {
+    baseUrl: "https://oxionai.com/v1",
+    apiKey: "fixture-oxion-key",
+  });
+  assert.equal(result.provider.enabled, false);
+  c.store.close();
+});
+
+test("same-origin replacement credentials cannot inherit another key's paid authorization", async () => {
+  const c = config(async (url: URL) =>
+    url.pathname.endsWith("/models")
+      ? json({ data: [{ id: "chat" }] })
+      : json({}, 404),
+  );
+  const initial = await discoverProvider(c, {
+    baseUrl: "https://oxionai.com/v1",
+    apiKey: "fixture-original-key",
+  });
+  c.store.saveGroup({
+    id: initial.provider.quotaGroup,
+    allowance: 200000000,
+    period: "lifetime",
+  });
+  const previous = {
+    ...initial.provider,
+    paid: true,
+    allowPaid: true,
+    enabled: true,
+  };
+  const changed = await discoverProvider(
+    c,
+    { baseUrl: "https://oxionai.com/v1", apiKey: "fixture-replacement-key" },
+    previous,
+  );
+  assert.equal(changed.provider.allowPaid, false);
+  assert.equal(changed.provider.enabled, false);
+  assert.equal(changed.provider.status, "billing_unverified");
+  const same = await discoverProvider(
+    c,
+    { baseUrl: "https://oxionai.com/v1", apiKey: "fixture-original-key" },
+    previous,
+  );
+  assert.equal(same.provider.allowPaid, true);
+  assert.equal(same.provider.enabled, true);
+  c.store.close();
+});

@@ -5,6 +5,14 @@ Source: https://github.com/prarit0097/apikeywebapp
 App directory: `/opt/apikeywebapp`
 Initial application code revision: `4a5d63c`. Latest super-key upgrade code: `74b8533` (subsequent documentation/test-selector commits do not change the deployed application).
 
+## Provider eligibility and external maintenance repair
+
+- Reproduced the live zero-model condition: saved Oxion credential was paused because its model list exposes access without account allowance. Read the already authenticated owner dashboard, matched the active key prefix without revealing the key, and imported the verified existing included-token allowance as a fixed budget. No public-plan quota guess, automatic renewal, purchase, top-up or subscription change. Account-specific financial values are omitted here.
+- Authenticated gateway discovery returned the real requested Claude ID and the automatic pool. A minimal live request reached the provider; an independent direct-provider check returned HTTP503, error.code service_upgrading, type maintenance. External provider maintenance prevents proving generation success at this time.
+- Maintenance responses now produce sanitized HTTP503 overloaded_error, preserve credentials and release rejected reservations. Safe pre-stream failover remains; raw provider errors and credentials are never exposed.
+- Rediscovery preserves an existing finite authorized plan budget and owner pause only for the same unchanged credential/origin. Replacement credentials cannot inherit another key's authorization. Per-1K positive prices override free flags. Nara additionally supports exact-host public free-plan metadata intersected with authenticated model access, without importing public caps as remaining balance.
+- Actual installed Claude Desktop rejects manual non-Claude IDs such as super. Corrected Desktop guide to require an actual provider-reported Claude ID; Code/OpenAI retain pool aliases. Do not disguise non-Claude models under Claude names. Owner desktop configuration was left with the original actual Claude ID.
+
 ## Claude Desktop compatibility and two-field onboarding
 
 - Application code `3cec3e7` adds automatic exact discovered model routes, same-model failover, explicit alias precedence, Anthropic/OpenAI model discovery metadata, pagination and model detail lookup. Unknown Claude IDs are never silently mapped to unrelated models.

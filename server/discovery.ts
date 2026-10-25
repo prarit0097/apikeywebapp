@@ -24,6 +24,8 @@ export class DiscoveryError extends Error {
 }
 const knownNames: Record<string, string> = {
   "router.bynara.id": "NaraRouter",
+  "oxionai.com": "Oxion AI",
+  "www.oxionai.com": "Oxion AI",
   "api.anthropic.com": "Anthropic",
   "api.openai.com": "OpenAI",
   "generativelanguage.googleapis.com": "Google Gemini",
@@ -397,6 +399,8 @@ export async function discoverProvider(
     "internal_reasoning",
     "cache_read",
     "cache_write",
+    "input_per_1k",
+    "output_per_1k",
   ];
   const freeModels = models.filter((m: any) => {
     if (
@@ -440,6 +444,28 @@ export async function discoverProvider(
     : models.length
       ? "billing_unverified"
       : "discovery_pending";
+  const previousBudget = previous
+    ? config.store.groups().find((g) => g.id === previous.quotaGroup)?.allowance
+    : null;
+  const retainedBudget =
+    freeModels.length === 0 &&
+    models.length > 0 &&
+    previous?.paid === true &&
+    previous.allowPaid === true &&
+    new URL(previous.baseUrl).origin === origin &&
+    (!input.apiKey ||
+      apiKey === decryptSecret(previous.encryptedKey, config.encryptionKey)) &&
+    typeof previousBudget === "number" &&
+    Number.isSafeInteger(previousBudget) &&
+    previousBudget >= 0;
+  if (retainedBudget) {
+    provider.allowPaid = true;
+    provider.enabled = previous!.enabled;
+    provider.status = provider.enabled ? "connected" : "paused";
+    notes.push(
+      "Existing explicit paid-plan authorization and finite pool budget retained; provider pricing is not classified as free",
+    );
+  }
   let quota = tokenQuota(catalog, provider.baseUrl + "/models");
   const extra: Record<string, any>[] = [];
   const suffixes =
@@ -473,7 +499,9 @@ export async function discoverProvider(
     notes.push("Tool support is unverified; model metadata did not declare it");
   if (!quota)
     notes.push(
-      "No token-denominated allowance was exposed; quota remains Unknown",
+      retainedBudget
+        ? "Provider token allowance was not exposed; the existing owner-configured pool budget remains in effect"
+        : "No token-denominated allowance was exposed; quota remains Unknown",
     );
   if (provider.status === "billing_unverified")
     notes.push(
@@ -497,10 +525,12 @@ export async function discoverProvider(
     quotaSource: quota?.source || null,
     notes,
   };
-  const message = provider.enabled
-    ? `Detected ${provider.name}: ${provider.models.length} free model(s). Token quota ${quota ? "detected from provider" : "not exposed"}.`
-    : provider.status === "billing_unverified"
-      ? `Detected ${provider.name}; free usage could not be confirmed. Credential saved paused.`
-      : `Credential saved. Model discovery is pending; retry detection later.`;
+  const message = retainedBudget
+    ? `Detected ${provider.name}; existing authorized pool budget retained. Provider ${provider.enabled ? "enabled" : "remains paused"}.`
+    : provider.enabled
+      ? `Detected ${provider.name}: ${provider.models.length} free model(s). Token quota ${quota ? "detected from provider" : "not exposed"}.`
+      : provider.status === "billing_unverified"
+        ? `Detected ${provider.name}; free usage could not be confirmed. Credential saved paused.`
+        : `Credential saved. Model discovery is pending; retry detection later.`;
   return { provider, tokenQuota: quota, message };
 }

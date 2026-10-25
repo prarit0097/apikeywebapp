@@ -402,11 +402,13 @@ export function mountGateway(app: Express) {
             const reason =
               e instanceof ProtocolError
                 ? "Provider returned an incomplete or unsupported response"
-                : rejected
-                  ? `Upstream HTTP ${e.status}`
-                  : ctl.signal.aborted
-                    ? "Request cancelled or timed out"
-                    : "Upstream connection failed";
+                : rejected && e.maintenance
+                  ? "Provider is temporarily under maintenance. Retry later or connect another provider"
+                  : rejected
+                    ? `Upstream HTTP ${e.status}`
+                    : ctl.signal.aborted
+                      ? "Request cancelled or timed out"
+                      : "Upstream connection failed";
             store.log({
               id: randomUUID(),
               alias: message.model,
@@ -451,8 +453,15 @@ export function mountGateway(app: Express) {
               return;
             }
             lastError = new HttpError(
-              rejected && e.status === 429 ? 429 : 502,
+              rejected && e.maintenance
+                ? 503
+                : rejected && e.status === 429
+                  ? 429
+                  : 502,
               `${reason}. Request ID: ${requestId}`,
+              rejected && e.maintenance
+                ? "overloaded_error"
+                : "invalid_request_error",
             );
             if (
               !rejected ||
