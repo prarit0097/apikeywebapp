@@ -2060,11 +2060,12 @@ input[type="checkbox"] {
     padding: 21px 19px 0;
   }
   .gateway-title h2 {
-    font-size: 29px;
+    font-size: 26px;
   }
   .key-art {
     margin-right: 3px;
-    width: 120px;
+    width: 96px;
+    transform: scale(0.8);
   }
   .gateway-title p {
     font-size: 10px;

@@ -153,6 +153,27 @@ test("owner mutations require both exact Origin and CSRF token; provider respons
   store.close();
 });
 
+test("new credentials default to potentially paid instead of assuming free entitlement", async () => {
+  const { app, store } = setup();
+  const { agent, csrf } = await owner(app);
+  const r = await agent
+    .post("/api/admin/providers")
+    .set("Origin", origin)
+    .set("X-CSRF-Token", csrf)
+    .send({
+      name: "Unknown provider",
+      adapter: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "test-key",
+      quotaGroup: "unknown",
+      models: ["model"],
+    });
+  assert.equal(r.status, 201);
+  assert.equal(r.body.paid, true);
+  assert.equal(r.body.allowPaid, false);
+  store.close();
+});
+
 test("gateway key is revealed once, authenticated, revoked, and owner logout invalidates session", async () => {
   const { app, store } = setup();
   const { agent, csrf } = await owner(app);

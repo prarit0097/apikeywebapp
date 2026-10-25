@@ -24,7 +24,7 @@ An allowance entered in the dashboard is a **manual estimate**, not a verified p
 ## First use
 
 1. Open the production website. Use the bootstrap token from your private deployment access file to create the owner account. This closes setup permanently after the first owner.
-2. Add a provider. Enter the **exact model IDs** from that provider. Choose the real account/project quota group, not a separate group for every key.
+2. Add a provider. Enter the **exact model IDs** from that provider. Choose the real account/project quota group, not a separate group for every key. Select **Free only** only after verifying the account/model cannot bill; unclassified credentials default to potentially paid and require a finite pool allowance plus explicit opt-in.
 3. Optionally configure the group's allowance, timezone and RPM/TPM. Leave unknown limits blank. If you enter a remaining budget for a partly used account, account for usage already recorded by this gateway when choosing its total allowance.
 4. Create a model alias, such as `coding`. Add targets in the desired order; priority also influences scheduling. Different-model fallback requires explicit opt-in.
 5. Generate a gateway key and save it immediately. It cannot be recovered later; revoke and create a replacement if lost.

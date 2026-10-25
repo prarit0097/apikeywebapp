@@ -11,3 +11,4 @@ data/
 playwright-report/
 test-results/
 .bootstrap-access.txt
+__pycache__/

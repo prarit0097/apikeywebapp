@@ -1,7 +1,7 @@
 # KeyPool hosted API gateway design
 
 Date: 2026-10-25
-Status: Proposed for user review; implementation has not started.
+Status: Approved by the user; implemented and undergoing production verification.
 
 ## Intent and authorized destination
 

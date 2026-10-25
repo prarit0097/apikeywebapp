@@ -42,7 +42,7 @@ const providerSchema = z
     models: z.array(z.string().trim().min(1).max(150)).min(1).max(100),
     priority: z.number().int().min(0).max(1000).default(10),
     enabled: z.boolean().default(true),
-    paid: z.boolean().default(false),
+    paid: z.boolean().default(true),
     allowPaid: z.boolean().default(false),
     tools: z.boolean().default(true),
     contextLimit: z

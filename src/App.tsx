@@ -690,7 +690,7 @@ export default function App() {
                 <>
                   <div className="stats-grid">
                     <Stat
-                      label="CONNECTED PROVIDERS"
+                      label="ENABLED PROVIDERS"
                       value={String(providers.filter((p) => p.enabled).length)}
                       icon={Layers3}
                       detail={`${providers.length} total · ${groups.length} quota pools`}
@@ -710,14 +710,14 @@ export default function App() {
                       detail="Recorded input + output · last 24h"
                     />
                     <Stat
-                      label="REQUEST SUCCESS"
+                      label="UPSTREAM SUCCESS"
                       value={
                         stats?.requests
                           ? `${Math.round((stats.successes / stats.requests) * 100)}%`
                           : "—"
                       }
                       icon={Activity}
-                      detail={`${stats?.requests || 0} requests · last 24h`}
+                      detail={`${stats?.requests || 0} attempts · last 24h`}
                     />
                     <Stat
                       label="ACTIVE GATEWAY KEYS"
@@ -1286,7 +1286,7 @@ export default function App() {
                       />
                     </div>
                     <span className="muted small">
-                      Latest 100 requests · 90-day retention
+                      Latest 100 upstream attempts · 90-day retention
                     </span>
                   </div>
                   <section className="panel">
@@ -1888,7 +1888,7 @@ function ProviderForm({
     [url, setUrl] = useState(provider?.baseUrl || ""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [paid, setPaid] = useState(provider?.paid || false);
+    [paid, setPaid] = useState(provider?.paid ?? true);
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setBusy(true);
@@ -2018,6 +2018,22 @@ function ProviderForm({
             rows={2}
           />
         </Field>
+        <Field
+          label="Billing policy"
+          hint="Free capacity is determined by your provider account and selected model, not by KeyPool."
+        >
+          <select
+            value={paid ? "paid" : "free"}
+            onChange={(e) => setPaid(e.target.value === "paid")}
+          >
+            <option value="paid">
+              May incur charges — budget and opt-in required
+            </option>
+            <option value="free">
+              Free only — I verified no billing for this key/model
+            </option>
+          </select>
+        </Field>
         <details className="advanced">
           <summary>
             Capabilities & routing options <ChevronDown size={15} />
@@ -2049,14 +2065,6 @@ function ProviderForm({
               defaultChecked={provider?.tools ?? true}
             />
             <span>Model supports function / tool calling</span>
-          </label>
-          <label className="check-field">
-            <input
-              type="checkbox"
-              checked={paid}
-              onChange={(e) => setPaid(e.target.checked)}
-            />
-            <span>This credential can incur paid usage</span>
           </label>
           {paid && (
             <label className="check-field warning-check">

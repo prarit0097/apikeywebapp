@@ -33,6 +33,7 @@ await page
   .fill("qa-only-not-a-real-provider-key");
 await page.getByLabel("Quota group / project ID").fill("qa-project");
 await page.getByLabel("Exact model IDs").fill("qa-model");
+await page.getByLabel("Billing policy").selectOption("free");
 await page.getByRole("button", { name: "Save provider" }).click();
 await page.getByRole("dialog").waitFor({ state: "hidden" });
 await page.getByRole("button", { name: "Choose your model routes" }).click();
