@@ -560,17 +560,6 @@ export function createApp(config: AppConfig) {
       next(e);
     }
   });
-  app.get("/v1/models", (_req, res) =>
-    res.json({
-      object: "list",
-      data: availableAliases(store).map((a) => ({
-        id: a.name,
-        object: "model",
-        created: 0,
-        owned_by: "keypool",
-      })),
-    }),
-  );
   app.get("/v1/quota", (_req, res) =>
     res.json(poolSummary(store, res.locals.keyId)),
   );

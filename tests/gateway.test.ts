@@ -550,3 +550,177 @@ test("a stale custom alias cannot route a model removed by free-only discovery",
   assert.equal(calls, 0);
   store.close();
 });
+
+test("discovered exact model IDs route without manual aliases and never substitute unknown Claude models", async () => {
+  let calls = 0;
+  const { app, store, p } = setup(async () => {
+    calls++;
+    return good();
+  });
+  store.saveProvider({ ...p, models: ["claude-opus-5.5", "other-model"] });
+  const exact = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "claude-opus-5.5" });
+  assert.equal(exact.status, 200);
+  const missing = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "claude-unavailable" });
+  assert.equal(missing.status, 404);
+  assert.match(missing.body.error.message, /model discovery/i);
+  assert.match(missing.body.error.message, /super/);
+  assert.equal(calls, 1);
+  store.close();
+});
+
+test("model discovery supports Anthropic metadata, cursors and details while hiding ineligible providers", async () => {
+  const { app, store, p } = setup(async () => good());
+  store.saveProvider({ ...p, models: ["claude-opus-5.5", "other-model"] });
+  store.saveProvider({
+    ...p,
+    id: "paused",
+    enabled: false,
+    models: ["hidden-paused"],
+  });
+  store.saveProvider({
+    ...p,
+    id: "paid",
+    paid: true,
+    allowPaid: false,
+    models: ["hidden-paid"],
+  });
+  const list = await request(app)
+    .get("/v1/models?limit=2")
+    .set("X-Api-Key", "kp_test");
+  assert.equal(list.status, 200);
+  assert.equal(list.body.data.length, 2);
+  assert.equal(list.body.has_more, true);
+  assert.equal(list.body.first_id, list.body.data[0].id);
+  assert.equal(list.body.last_id, list.body.data[1].id);
+  for (const m of list.body.data) {
+    assert.equal(m.type, "model");
+    assert.equal(m.object, "model");
+    assert.equal(m.display_name, m.id);
+    assert.ok(!Number.isNaN(Date.parse(m.created_at)));
+  }
+  const next = await request(app)
+    .get(`/v1/models?limit=2&after_id=${encodeURIComponent(list.body.last_id)}`)
+    .set("X-Api-Key", "kp_test");
+  assert.equal(next.body.has_more, false);
+  assert.deepEqual(
+    next.body.data.map((m: any) => m.id),
+    ["other-model"],
+  );
+  const detail = await request(app)
+    .get("/v1/models/claude-opus-5.5")
+    .set("X-Api-Key", "kp_test");
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.id, "claude-opus-5.5");
+  assert.equal(
+    (
+      await request(app)
+        .get("/v1/models/hidden-paid")
+        .set("X-Api-Key", "kp_test")
+    ).status,
+    404,
+  );
+  assert.equal(
+    (await request(app).get("/v1/models?limit=0").set("X-Api-Key", "kp_test"))
+      .status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(app)
+        .get("/v1/models?after_id=missing")
+        .set("X-Api-Key", "kp_test")
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(app)
+        .get("/v1/models?after_id=super&before_id=super")
+        .set("X-Api-Key", "kp_test")
+    ).status,
+    400,
+  );
+  const previous = await request(app)
+    .get("/v1/models?before_id=other-model&limit=1")
+    .set("X-Api-Key", "kp_test");
+  assert.deepEqual(
+    previous.body.data.map((m: any) => m.id),
+    ["claude-opus-5.5"],
+  );
+  assert.equal(previous.body.has_more, true);
+  assert.equal(
+    (await request(app).get("/v1/models/claude-opus-5.5")).status,
+    401,
+  );
+  store.close();
+});
+
+test("long discovered model IDs accepted by provider schema remain usable by clients", async () => {
+  const { app, store, p } = setup(async () => good());
+  const model = "provider/" + "m".repeat(130);
+  store.saveProvider({ ...p, models: [model] });
+  assert.equal(
+    (
+      await request(app)
+        .get(`/v1/models/${encodeURIComponent(model)}`)
+        .set("X-Api-Key", "kp_test")
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await request(app)
+        .post("/v1/messages")
+        .set("X-Api-Key", "kp_test")
+        .send({ ...body, model })
+    ).status,
+    200,
+  );
+  store.close();
+});
+
+test("explicit aliases override discovered model names and exact routes fail over only across the same model", async () => {
+  let calls: string[] = [];
+  const { app, store, p } = setup(async (url: any, options: any) => {
+    const payload = JSON.parse(options.body);
+    calls.push(payload.model);
+    if (String(url).includes("example.com")) return response([], 429);
+    return good();
+  });
+  store.saveProvider({ ...p, models: ["shared-model", "manual-model"] });
+  store.saveProvider({
+    ...p,
+    id: "p2",
+    quotaGroup: "group2",
+    baseUrl: "https://second.example/v1",
+    models: ["shared-model"],
+  });
+  store.saveGroup({ id: "group2", allowance: 100000, period: "daily" });
+  const exact = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "shared-model" });
+  assert.equal(exact.status, 200);
+  assert.deepEqual(calls, ["shared-model", "shared-model"]);
+  store.saveAlias({
+    id: "manual",
+    name: "shared-model",
+    targets: [{ providerId: "p", model: "manual-model" }],
+    allowCrossModel: false,
+  });
+  store.run("UPDATE quota_groups SET cooldown=0 WHERE id='group'");
+  calls = [];
+  const overridden = await request(app)
+    .post("/v1/messages")
+    .set("X-Api-Key", "kp_test")
+    .send({ ...body, model: "shared-model" });
+  assert.equal(overridden.status, 429);
+  assert.deepEqual(calls, ["manual-model"]);
+  store.close();
+});

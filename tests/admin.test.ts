@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import request from "supertest";
 import { randomBytes } from "node:crypto";
 import { createApp, finishApp } from "../server/app.js";
+import { mountGateway } from "../server/gateway.js";
 import { Store } from "../server/store.js";
 import express from "express";
 
@@ -44,17 +45,17 @@ test("Docker proxy client IPs isolate public authentication throttles", async ()
 const origin = "http://localhost:4000";
 const setup = () => {
   const store = new Store(":memory:");
+  const app = createApp({
+    store,
+    origin,
+    encryptionKey: randomBytes(32),
+    bootstrapToken: "bootstrap-test-token-long-enough",
+    production: false,
+  });
+  mountGateway(app);
   return {
     store,
-    app: finishApp(
-      createApp({
-        store,
-        origin,
-        encryptionKey: randomBytes(32),
-        bootstrapToken: "bootstrap-test-token-long-enough",
-        production: false,
-      }),
-    ),
+    app: finishApp(app),
   };
 };
 async function owner(app: any) {

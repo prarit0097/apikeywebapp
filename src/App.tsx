@@ -151,7 +151,7 @@ const nav: { id: Page; name: string; icon: typeof Activity }[] = [
   { id: "routing", name: "Model routing", icon: GitBranch },
   { id: "keys", name: "Gateway keys", icon: KeyRound },
   { id: "usage", name: "Request logs", icon: Activity },
-  { id: "connect", name: "Connect Claude Code", icon: Terminal },
+  { id: "connect", name: "Connect apps", icon: Terminal },
 ];
 const number = (n: number | null | undefined) =>
   n === null || n === undefined
@@ -537,7 +537,7 @@ export default function App() {
         <nav>
           <a href="#connect" className={page === "connect" ? "active" : ""}>
             <Terminal size={18} />
-            <span>Connect Claude Code</span>
+            <span>Connect apps</span>
             <ArrowUpRight size={13} />
           </a>
           <a
@@ -2513,6 +2513,120 @@ function Connect({
       .join("\n") + "\nclaude";
   return (
     <div className="connect-grid">
+      <section
+        className="panel desktop-setup"
+        aria-labelledby="desktop-setup-heading"
+      >
+        <div className="section-heading">
+          <div>
+            <h2 id="desktop-setup-heading">Connect Claude Desktop</h2>
+            <p>
+              Open Developer → Configure third-party inference → Connection.
+            </p>
+          </div>
+          <Badge>GATEWAY</Badge>
+        </div>
+        <div className="desktop-settings">
+          {[
+            ["Connection provider", "Gateway"],
+            ["Credential kind", "Static API key"],
+            ["Gateway base URL", origin],
+            ["Gateway API key", "Your generated gateway key (super key)"],
+            ["Gateway auth scheme", "x-api-key"],
+            ["Model discovery", "On"],
+          ].map(([label, value]) => (
+            <div className="desktop-setting" key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+              {label === "Gateway base URL" && (
+                <CopyButton value={value} label="Copy gateway base URL" />
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="desktop-model-choice">
+          <Field label="Gateway alias for Claude Desktop">
+            <select value={alias} onChange={(e) => setAlias(e.target.value)}>
+              {aliases.map((a) => (
+                <option key={a.id} value={a.name}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <CopyButton value={alias} label="Copy model ID" />
+        </div>
+        <p className="muted small">
+          Turn on model discovery, then use Test model discovery and select an
+          ID returned by this gateway. If a manual model list overrides
+          discovery, remove unavailable entries such as{" "}
+          <code>claude-opus-5.5</code>
+          and use the gateway alias shown above, or an exact ID returned by
+          discovery. Then Save Changes, Apply Changes and Test connection.
+        </p>
+        <div className="alert info">
+          <AlertCircle size={18} />
+          <span>
+            <code>super</code> pools eligible providers and can switch between
+            different models. It does not turn another model into Claude. Tools
+            and other capabilities depend on the selected upstream model. OpenAI
+            translation supports text and function tools; images, extended
+            thinking, prompt caching, server tools and deferred tools are
+            unsupported. This setup does not establish full Desktop or Cowork
+            compatibility.
+          </span>
+        </div>
+        <details className="desktop-details">
+          <summary>Other settings from Claude Desktop</summary>
+          <dl>
+            <div>
+              <dt>Use 1M / Offer 1M-context variant</dt>
+              <dd>
+                Off unless every model in the route supports a 1M-token context.
+                A large pooled token balance does not increase context size.
+              </dd>
+            </div>
+            <div>
+              <dt>Tier alias / Max effort / Default model effort</dt>
+              <dd>
+                Leave unset unless the upstream model explicitly supports those
+                options.
+              </dd>
+            </div>
+            <div>
+              <dt>Gateway-managed Claude Code</dt>
+              <dd>
+                Off. This gateway uses static keys and does not provide a
+                Desktop sign-in service.
+              </dd>
+            </div>
+            <div>
+              <dt>Artifact preview origin / Custom inference headers</dt>
+              <dd>
+                Leave blank. Basic text and function tools do not need extra
+                settings.
+              </dd>
+            </div>
+            <div>
+              <dt>Stream idle timeout</dt>
+              <dd>Keep the default 300 seconds.</dd>
+            </div>
+            <div>
+              <dt>Model catalog URL / Network proxy / PAC URL</dt>
+              <dd>
+                Leave blank unless your network administrator supplied these. A
+                model catalog cannot add models to this gateway.
+              </dd>
+            </div>
+            <div>
+              <dt>Workspace VM IPv6</dt>
+              <dd>
+                Leave at its default; it is separate from gateway inference.
+              </dd>
+            </div>
+          </dl>
+        </details>
+      </section>
       <section className="panel connect-main">
         <div className="section-heading">
           <div className="route-name">
@@ -2575,8 +2689,8 @@ function Connect({
           <Badge>NO GENERATION</Badge>
         </div>
         <p className="muted small">
-          This checks your gateway key and lists model aliases. It does not
-          spend provider tokens or store the entered key.
+          This checks your gateway key and lists available model IDs. It does
+          not spend provider tokens or store the entered key.
         </p>
         <form
           className="connection-test"
@@ -2586,13 +2700,13 @@ function Connect({
             setTestResult("");
             try {
               const r = await fetch("/v1/models", {
-                headers: { Authorization: `Bearer ${testKey}` },
+                headers: { "x-api-key": testKey },
               });
               const b = await r.json();
               if (!r.ok)
                 throw new Error(b.error?.message || "Connection failed");
               setTestResult(
-                `Connected. ${b.data.length} model alias${b.data.length === 1 ? "" : "es"} available. Live generation remains unverified.`,
+                `Connected. ${b.data.length} model ID${b.data.length === 1 ? "" : "s"} returned${b.has_more ? " on this page; more are available through model discovery" : ""}. Live generation remains unverified.`,
               );
             } catch (e) {
               setTestResult((e as Error).message);

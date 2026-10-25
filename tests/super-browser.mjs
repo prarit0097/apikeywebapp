@@ -104,7 +104,7 @@ await page.screenshot({
   path: ".private/superkey-desktop.png",
   fullPage: true,
 });
-await page.getByRole("link", { name: "Connect Claude Code" }).click();
+await page.getByRole("link", { name: "Connect apps" }).click();
 assert.equal(await page.getByLabel("Model alias").inputValue(), "super");
 await page.setViewportSize({ width: 390, height: 844 });
 assert.equal(

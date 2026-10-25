@@ -28,6 +28,31 @@ export function availableAliases(store: Store): Alias[] {
     ? aliases
     : [superAlias(store), ...aliases];
 }
+// Client discovery and inference use exact provider model IDs as well as owner aliases.
+// A discovered ID never authorizes fallback to a different model.
+export function gatewayAliases(store: Store): Alias[] {
+  const aliases = availableAliases(store);
+  const byName = new Map<string, Alias>();
+  for (const p of eligibleProviders(store).sort(
+    (a, b) => a.priority - b.priority,
+  )) {
+    for (const model of p.models) {
+      if (!byName.has(model))
+        byName.set(model, {
+          id: `discovered:${model}`,
+          name: model,
+          allowCrossModel: false,
+          targets: [],
+        });
+      byName.get(model)!.targets.push({ providerId: p.id, model });
+    }
+  }
+  const reserved = new Set(aliases.map((a) => a.name));
+  return [
+    ...aliases,
+    ...[...byName.values()].filter((a) => !reserved.has(a.name)),
+  ];
+}
 export function poolSummary(store: Store, keyId?: string) {
   const aliases = availableAliases(store),
     route = aliases.find((a) => a.name === "super")!;

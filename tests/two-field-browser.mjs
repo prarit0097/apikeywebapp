@@ -170,6 +170,73 @@ try {
     fullPage: true,
     animations: "disabled",
   });
+  await page.goto("http://localhost:4012/#connect");
+  const desktopGuide = page.getByRole("region", {
+    name: "Connect Claude Desktop",
+  });
+  await desktopGuide.waitFor();
+  await desktopGuide
+    .getByRole("button", { name: "Copy gateway base URL", exact: true })
+    .waitFor();
+  const settings = desktopGuide.locator(".desktop-setting");
+  assert.match(
+    await settings.filter({ hasText: "Gateway base URL" }).innerText(),
+    /http:\/\/localhost:4012/,
+  );
+  assert.match(
+    await settings.filter({ hasText: "Gateway auth scheme" }).innerText(),
+    /x-api-key/,
+  );
+  assert.match(
+    await settings.filter({ hasText: "Model discovery" }).innerText(),
+    /On/,
+  );
+  assert.equal(
+    await desktopGuide
+      .getByLabel("Gateway alias for Claude Desktop")
+      .inputValue(),
+    "super",
+  );
+  assert.match(await desktopGuide.innerText(), /remove unavailable entries/);
+  assert.match(
+    await desktopGuide.innerText(),
+    /does not turn another model into Claude/,
+  );
+  await desktopGuide
+    .getByText("Other settings from Claude Desktop", { exact: true })
+    .click();
+  assert.match(
+    await desktopGuide.innerText(),
+    /Off unless every model in the route supports a 1M-token context/,
+  );
+  assert.match(
+    await desktopGuide.innerText(),
+    /pooled token balance does not increase context size/,
+  );
+  await page
+    .getByRole("heading", { name: "Connect Claude Code", exact: true })
+    .waitFor();
+  await page.screenshot({
+    path: ".private/desktop-guide-wide.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 375, height: 812 });
+  assert.equal(
+    await page
+      .locator("body")
+      .evaluate((element) => element.scrollWidth > innerWidth),
+    false,
+  );
+  await page.screenshot({
+    path: ".private/desktop-guide-mobile.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.goto("http://localhost:4012/#overview");
+  await page
+    .getByRole("heading", { name: "One key. Every provider." })
+    .waitFor();
   await page.setViewportSize({ width: 375, height: 812 });
   assert.equal(
     await page
@@ -209,6 +276,13 @@ try {
         balanceQuota: 750,
         editKeptMaskedKey: true,
         replacementKeyMasked: true,
+        desktopGuide: {
+          rootUrl: true,
+          authScheme: "x-api-key",
+          modelDiscovery: true,
+          defaultModel: "super",
+          conservativeContext: true,
+        },
         mobileWidth: 375,
         browserErrors: errors,
       },

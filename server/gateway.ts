@@ -13,11 +13,11 @@ import {
   ProtocolError,
 } from "./protocol.js";
 import { providerEvents, UpstreamError, testProvider } from "./providers.js";
-import { availableAliases } from "./pool.js";
+import { gatewayAliases, eligibleProviders } from "./pool.js";
 
 const messageSchema = z
   .object({
-    model: z.string().min(1).max(100),
+    model: z.string().min(1).max(150),
     messages: z
       .array(
         z
@@ -43,6 +43,66 @@ export function mountGateway(app: Express) {
   const { store } = config;
   let active = 0,
     cursor = 0;
+  const modelCatalogue = () => {
+    const eligible = new Map(eligibleProviders(store).map((p) => [p.id, p]));
+    return gatewayAliases(store)
+      .filter((a) =>
+        a.targets.some((t) =>
+          eligible.get(t.providerId)?.models.includes(t.model),
+        ),
+      )
+      .map((a) => ({
+        id: a.name,
+        object: "model",
+        type: "model",
+        created: 0,
+        created_at: "1970-01-01T00:00:00Z",
+        display_name: a.name,
+        owned_by: "keypool",
+      }));
+  };
+  app.get("/v1/models", (req, res) => {
+    const query = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(1000).default(20),
+        after_id: z.string().min(1).max(150).optional(),
+        before_id: z.string().min(1).max(150).optional(),
+      })
+      .parse(req.query);
+    if (query.after_id && query.before_id)
+      throw new HttpError(400, "Use either after_id or before_id, not both");
+    const all = modelCatalogue();
+    const cursorId = query.after_id || query.before_id;
+    const index = cursorId ? all.findIndex((m) => m.id === cursorId) : -1;
+    if (cursorId && index < 0)
+      throw new HttpError(400, "Unknown model pagination cursor");
+    const start = query.before_id
+      ? Math.max(0, index - query.limit)
+      : query.after_id
+        ? index + 1
+        : 0;
+    const end = query.before_id
+      ? index
+      : Math.min(all.length, start + query.limit);
+    const data = all.slice(start, end);
+    res.json({
+      object: "list",
+      data,
+      has_more: query.before_id ? start > 0 : end < all.length,
+      first_id: data[0]?.id || null,
+      last_id: data.at(-1)?.id || null,
+    });
+  });
+  app.get("/v1/models/:id", (req, res) => {
+    const model = modelCatalogue().find((m) => m.id === req.params.id);
+    if (!model)
+      throw new HttpError(
+        404,
+        "Model unavailable. Enable model discovery or select super from GET /v1/models.",
+        "not_found_error",
+      );
+    res.json(model);
+  });
   app.post("/api/admin/providers/:id/test", owner, async (req, res) => {
     const p = store.provider(String(req.params.id));
     if (!p) throw new HttpError(404, "Provider not found");
@@ -90,13 +150,11 @@ export function mountGateway(app: Express) {
         if (e instanceof ProtocolError) throw new HttpError(400, e.message);
         throw e;
       }
-      const alias = availableAliases(store).find(
-        (a) => a.name === message.model,
-      );
+      const alias = gatewayAliases(store).find((a) => a.name === message.model);
       if (!alias)
         throw new HttpError(
           404,
-          "Model alias not found. Create it in Routing first.",
+          "Model unavailable. Enable model discovery and select an ID from GET /v1/models, or use super for automatic pooling. A custom model name requires a route in Routing.",
           "not_found_error",
         );
       if (active >= 8)

@@ -2520,3 +2520,86 @@ input[type="checkbox"] {
   padding-left: 18px;
   margin-bottom: 0;
 }
+
+/* Keep Desktop setup values readable and copyable at phone widths. */
+.desktop-setup {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 25px;
+}
+.desktop-settings {
+  margin-top: 24px;
+}
+.desktop-setting {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border, #2a362b);
+  font-size: 13px;
+}
+.desktop-setting > span {
+  color: var(--muted, #9aa995);
+}
+.desktop-setting > strong {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.desktop-model-choice {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin: 22px 0 14px;
+}
+.desktop-model-choice > .field {
+  flex: 1;
+  min-width: 0;
+}
+.desktop-model-choice select {
+  width: 100%;
+}
+.desktop-details {
+  margin-top: 22px;
+  font-size: 13px;
+}
+.desktop-details summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 500;
+}
+.desktop-details dl {
+  margin: 4px 0 0;
+}
+.desktop-details dl > div {
+  padding: 12px 0;
+  border-top: 1px solid var(--border, #2a362b);
+}
+.desktop-details dt {
+  font-weight: 500;
+  margin-bottom: 5px;
+}
+.desktop-details dd {
+  margin: 0;
+  color: var(--muted, #9aa995);
+  line-height: 1.7;
+}
+@media (max-width: 600px) {
+  .desktop-setup {
+    padding: 19px;
+  }
+  .desktop-setting {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 10px;
+  }
+  .desktop-setting > span {
+    grid-column: 1 / -1;
+  }
+  .desktop-setting > strong {
+    min-width: 0;
+  }
+  .desktop-model-choice {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
